@@ -1862,7 +1862,7 @@ if EXCEL_AVAILABLE:
     
     st.success("✅ Export includes: Executive Summary, Financials, CAPEX, O&M, Technical Specs, Reliability, Sensitivity, Footprint, BESS Sizing")
 
-# PDF Export
+# PDF Export (independent of Excel)
 if PDF_AVAILABLE:
     st.markdown("---")
     
@@ -2066,10 +2066,8 @@ if PDF_AVAILABLE:
     with col_pdf2:
         st.info("📄 **PDF Includes:** Executive Summary, Technical Config, Financials, CAPEX, Environmental")
 
-else:
-    st.info("💡 **PDF export unavailable.** Install `reportlab` for PDF proposals: `pip install reportlab`")
-
-else:
+# CSV Fallback (if no Excel available)
+if not EXCEL_AVAILABLE:
     # Fallback: CSV exports
     st.info("💡 **CSV Export Mode:** Multiple files available for download")
     
