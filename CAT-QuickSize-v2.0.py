@@ -159,29 +159,34 @@ def calculate_bess_requirements(p_net_req_avg, p_net_req_peak, step_load_req,
                                 gen_ramp_rate, gen_step_capability, enable_black_start=False):
     """
     Sophisticated BESS sizing based on actual transient analysis
+    NOW RESPONDS TO: Increased step load requirements
     """
-    # Component 1: Step Load Support
+    # Component 1: Step Load Support (CRITICAL - responds to step_load_req)
     step_load_mw = p_net_req_avg * (step_load_req / 100)
     gen_step_mw = p_net_req_avg * (gen_step_capability / 100)
     bess_step_support = max(0, step_load_mw - gen_step_mw)
     
-    # Component 2: Ramp Rate Support
+    # Component 2: Peak Shaving (covers peak vs average difference)
+    bess_peak_shaving = p_net_req_peak - p_net_req_avg
+    
+    # Component 3: Ramp Rate Support
     load_change_rate = 5.0  # MW/s (AI workload aggressive)
     bess_ramp_support = max(0, (load_change_rate - gen_ramp_rate) * 10)  # 10s buffer
     
-    # Component 3: Frequency Regulation
+    # Component 4: Frequency Regulation
     bess_freq_reg = p_net_req_avg * 0.05  # 5% for freq regulation
     
-    # Component 4: Black Start Capability
+    # Component 5: Black Start Capability
     bess_black_start = p_net_req_peak * 0.05 if enable_black_start else 0
     
     # Total Power (take maximum of all requirements)
     bess_power_total = max(
         bess_step_support,
+        bess_peak_shaving,
         bess_ramp_support,
         bess_freq_reg,
         bess_black_start,
-        p_net_req_peak * 0.15  # Minimum 15%
+        p_net_req_peak * 0.15  # Minimum 15% floor
     )
     
     # Energy Duration Calculation
@@ -198,6 +203,7 @@ def calculate_bess_requirements(p_net_req_avg, p_net_req_peak, step_load_req,
     
     breakdown = {
         'step_support': bess_step_support,
+        'peak_shaving': bess_peak_shaving,
         'ramp_support': bess_ramp_support,
         'freq_reg': bess_freq_reg,
         'black_start': bess_black_start
@@ -235,19 +241,64 @@ def calculate_availability_weibull(n_total, n_running, mtbf_hours, project_years
     avg_availability = np.mean(availability_over_time)
     return avg_availability, availability_over_time
 
-def optimize_fleet_size(p_net_req_avg, p_net_req_peak, unit_cap, step_load_req, gen_data):
+def optimize_fleet_size(p_net_req_avg, p_net_req_peak, unit_cap, step_load_req, gen_data, use_bess=False):
     """
     Multi-objective fleet optimization
+    NOW CONSIDERS: BESS for peak shaving and step load coverage
     """
-    # Constraint 1: Peak capacity
-    n_min_peak = math.ceil(p_net_req_peak / unit_cap)
+    # NEW: If BESS enabled, size for average load (BESS handles peaks)
+    if use_bess:
+        # Constraint 1: Average capacity + safety margin (BESS covers peak)
+        n_min_peak = math.ceil(p_net_req_avg * 1.15 / unit_cap)  # +15% margin
+        
+        # Constraint 3: Step load covered by BESS (not gensets)
+        # Only need headroom for ramp-up capability
+        headroom_required = p_net_req_avg * 1.10  # 10% headroom only
+        n_min_step = math.ceil(headroom_required / unit_cap)
+    else:
+        # Constraint 1: Must cover peak load without BESS
+        n_min_peak = math.ceil(p_net_req_peak / unit_cap)
+        
+        # Constraint 3: Must have headroom for step load
+        headroom_required = p_net_req_avg * (1 + step_load_req/100) * 1.20
+        n_min_step = math.ceil(headroom_required / unit_cap)
     
-    # Constraint 2: Part-load efficiency (target 60-80% load)
-    n_ideal_eff = math.ceil(p_net_req_avg / (unit_cap * 0.70))
+    # Constraint 2: Part-load efficiency (target 65-80% load)
+    n_ideal_eff = math.ceil(p_net_req_avg / (unit_cap * 0.72))
     
-    # Constraint 3: Step load headroom (need 20% margin)
-    headroom_required = p_net_req_avg * (1 + step_load_req/100) * 1.20
-    n_min_step = math.ceil(headroom_required / unit_cap)
+    # Take maximum of all constraints
+    n_running_optimal = max(n_min_peak, n_ideal_eff, n_min_step)
+    
+    # Analyze efficiency at different fleet sizes
+    fleet_options = {}
+    for n in range(max(1, n_running_optimal - 1), n_running_optimal + 3):
+        # Check if meets minimum capacity
+        if use_bess:
+            if n * unit_cap < p_net_req_avg * 1.10:  # Need 110% of average
+                continue
+        else:
+            if n * unit_cap < p_net_req_peak:  # Need full peak
+                continue
+        
+        load_pct = (p_net_req_avg / (n * unit_cap)) * 100
+        if load_pct < 30 or load_pct > 95:  # Outside acceptable range
+            continue
+        eff = get_part_load_efficiency(gen_data["electrical_efficiency"], load_pct, gen_data["type"])
+        
+        # Score: favor 65-80% load range
+        optimal_load = 72.5
+        load_penalty = abs(load_pct - optimal_load) / 100
+        fleet_options[n] = {
+            'efficiency': eff,
+            'load_pct': load_pct,
+            'score': eff * (1 - load_penalty * 0.5)
+        }
+    
+    if fleet_options:
+        optimal_n = max(fleet_options, key=lambda x: fleet_options[x]['score'])
+        return optimal_n, fleet_options
+    else:
+        return n_running_optimal, {}
     
     # Take maximum
     n_running_optimal = max(n_min_peak, n_ideal_eff, n_min_step)
@@ -647,14 +698,14 @@ gen_data = available_gens[selected_gen]
 unit_iso_cap = gen_data["iso_rating_mw"]
 unit_site_cap = unit_iso_cap * derate_factor_calc
 
-# FLEET OPTIMIZATION
+# FLEET OPTIMIZATION (NOW CONSIDERS BESS)
 n_running_optimal, fleet_options = optimize_fleet_size(
-    p_total_avg, p_total_peak, unit_site_cap, step_load_req, gen_data
+    p_total_avg, p_total_peak, unit_site_cap, step_load_req, gen_data, use_bess
 )
 
 n_running = n_running_optimal
 
-# Redundancy (N+X) with Weibull reliability
+# Redundancy (N+X) with aging reliability model
 avail_decimal = avail_req / 100
 mtbf_hours = gen_data["mtbf_hours"]
 
@@ -696,6 +747,38 @@ installed_cap = n_total * unit_site_cap
 
 # Calculate reliability curve over time
 _, availability_curve = calculate_availability_weibull(n_total, n_running, mtbf_hours, project_years)
+
+# NEW: FEEDBACK LOOP - Optimize n_running if redundancy created low loading
+# This addresses the issue where high availability + redundancy → low load per unit
+load_per_unit_check = (p_total_avg / (n_running * unit_site_cap)) * 100
+
+optimization_iterations = 0
+while load_per_unit_check < 60 and n_running > 1 and use_bess and optimization_iterations < 5:
+    # Try reducing running units (BESS can handle transients)
+    n_running_test = n_running - 1
+    n_total_test = n_running_test + n_reserve
+    
+    # Check minimum capacity with BESS
+    if n_running_test * unit_site_cap < p_total_avg * 1.10:
+        break  # Can't reduce further - need 110% of average minimum
+    
+    # Check if still meets availability
+    avail_test, _ = calculate_availability_weibull(n_total_test, n_running_test, mtbf_hours, project_years)
+    
+    if avail_test >= avail_decimal:
+        # Good - reduce running units
+        n_running = n_running_test
+        n_total = n_running + n_reserve
+        installed_cap = n_total * unit_site_cap
+        load_per_unit_check = (p_total_avg / (n_running * unit_site_cap)) * 100
+        prob_gen = avail_test
+        optimization_iterations += 1
+    else:
+        break  # Can't reduce - would fail availability
+
+if optimization_iterations > 0:
+    st.sidebar.success(f"✅ **Fleet Optimized:** Reduced to {n_running} running units (was {n_running + optimization_iterations}) via BESS peak shaving")
+
 
 # Load Distribution Strategy
 st.sidebar.markdown("⚡ **Load Distribution**")
@@ -1101,19 +1184,47 @@ with t1:
     ))
     fig_ldc.add_hline(
         y=installed_cap, line_dash="dash", line_color="red",
-        annotation_text=f"Installed: {installed_cap:.1f} MW"
+        annotation_text=f"Total Installed: {installed_cap:.1f} MW",
+        annotation_position="top right"
     )
+    
+    # Show genset capacity line
+    genset_capacity = n_running * unit_site_cap
+    fig_ldc.add_hline(
+        y=genset_capacity, line_dash="dashdot", line_color="green",
+        annotation_text=f"Genset Capacity: {genset_capacity:.1f} MW",
+        annotation_position="bottom right"
+    )
+    
     fig_ldc.add_hline(
         y=p_total_avg, line_dash="dot", line_color="orange",
         annotation_text=f"Average: {p_total_avg:.1f} MW"
     )
+    
+    # Show BESS peak shaving zone if applicable
+    if use_bess and p_total_peak > genset_capacity:
+        fig_ldc.add_hrect(
+            y0=genset_capacity, y1=p_total_peak,
+            fillcolor="yellow", opacity=0.2,
+            annotation_text=f"BESS Peak Shaving Zone ({bess_power_total:.1f} MW)",
+            annotation_position="top left"
+        )
+    
     fig_ldc.update_layout(
-        title="Load Duration Curve",
+        title="Load Duration Curve (with BESS Peak Shaving Strategy)" if use_bess else "Load Duration Curve",
         xaxis_title="Hours per Year (Sorted)",
         yaxis_title="Load (MW)",
         height=400
     )
     st.plotly_chart(fig_ldc, use_container_width=True)
+    
+    # Show sizing strategy explanation
+    if use_bess:
+        st.info(f"💡 **BESS Peak Shaving Strategy:**\n"
+                f"- Gensets sized for **{genset_capacity:.1f} MW** (average + margin)\n"
+                f"- BESS covers **{(p_total_peak - genset_capacity):.1f} MW** peak difference\n"
+                f"- Result: **Fewer gensets**, **higher efficiency** ({fleet_efficiency*100:.1f}% vs ~{get_part_load_efficiency(gen_data['electrical_efficiency'], 60, gen_data['type'])*100:.1f}% without BESS)")
+
     
     # Fleet optimization results
     if fleet_options:
@@ -1235,16 +1346,53 @@ with t2:
     if use_bess:
         st.info(f"🔋 **BESS Capacity:** {bess_power_total:.1f} MW / {bess_energy_total:.1f} MWh")
         
+        # Show BESS strategy
+        peak_vs_avg = p_total_peak - p_total_avg
+        if peak_vs_avg > 0:
+            st.success(f"✅ **BESS Peak Shaving:** Gensets sized for {p_total_avg:.1f} MW average. "
+                      f"BESS covers {peak_vs_avg:.1f} MW peak difference → **{optimization_iterations} fewer gensets needed**")
+        
         # BESS Breakdown
         bess_breakdown_data = pd.DataFrame({
-            'Component': list(bess_breakdown.keys()),
-            'Power (MW)': list(bess_breakdown.values())
+            'Component': ['Step Support', 'Peak Shaving', 'Ramp Support', 'Freq Reg', 'Black Start'],
+            'Power (MW)': [
+                bess_breakdown.get('step_support', 0),
+                bess_breakdown.get('peak_shaving', 0),
+                bess_breakdown.get('ramp_support', 0),
+                bess_breakdown.get('freq_reg', 0),
+                bess_breakdown.get('black_start', 0)
+            ]
         })
         
-        fig_bess = px.bar(bess_breakdown_data, x='Component', y='Power (MW)',
-                         title="BESS Sizing Breakdown", color='Component')
-        fig_bess.update_layout(showlegend=False, height=350)
-        st.plotly_chart(fig_bess, use_container_width=True)
+        # Filter out zero values
+        bess_breakdown_data = bess_breakdown_data[bess_breakdown_data['Power (MW)'] > 0.01]
+        
+        col_bess1, col_bess2 = st.columns([2, 1])
+        
+        with col_bess1:
+            fig_bess = px.bar(bess_breakdown_data, x='Component', y='Power (MW)',
+                             title="BESS Sizing Breakdown (Dominant Component Sets Capacity)", 
+                             color='Component',
+                             text='Power (MW)')
+            fig_bess.update_traces(texttemplate='%{text:.1f} MW', textposition='outside')
+            fig_bess.update_layout(showlegend=False, height=350)
+            st.plotly_chart(fig_bess, use_container_width=True)
+        
+        with col_bess2:
+            st.markdown("**BESS Functions:**")
+            if bess_breakdown.get('peak_shaving', 0) > 0:
+                st.write(f"✅ Peak Shaving: {bess_breakdown['peak_shaving']:.1f} MW")
+            if bess_breakdown.get('step_support', 0) > 0:
+                st.write(f"✅ Step Load: {bess_breakdown['step_support']:.1f} MW")
+            if bess_breakdown.get('ramp_support', 0) > 0:
+                st.write(f"✅ Ramp Rate: {bess_breakdown['ramp_support']:.1f} MW")
+            if bess_breakdown.get('freq_reg', 0) > 0:
+                st.write(f"✅ Freq Reg: {bess_breakdown['freq_reg']:.1f} MW")
+            if bess_breakdown.get('black_start', 0) > 0:
+                st.write(f"✅ Black Start: {bess_breakdown['black_start']:.1f} MW")
+            
+            st.caption(f"ℹ️ Final capacity = MAX of all requirements")
+
     
     # Reliability over time (Weibull)
     st.markdown("### 📊 Reliability Projection (Aging Model)")
