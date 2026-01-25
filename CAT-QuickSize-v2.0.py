@@ -213,8 +213,10 @@ def calculate_bess_requirements(p_net_req_avg, p_net_req_peak, step_load_req,
 
 def calculate_availability_weibull(n_total, n_running, mtbf_hours, project_years):
     """
-    Simplified reliability model with aging factor (replaces Weibull)
-    Uses binomial distribution with time-degraded availability
+    Reliability model with aging factor using CORRECT exponential distribution
+    
+    MTBF → Exponential reliability: R(t) = exp(-t/MTBF)
+    NOT: R(t) = 1 - (t/MTBF)  ← This was the bug
     """
     availability_over_time = []
     
@@ -224,10 +226,11 @@ def calculate_availability_weibull(n_total, n_running, mtbf_hours, project_years
         aging_factor = 1.0 - (year * 0.005)
         aging_factor = max(0.85, aging_factor)  # Floor at 85%
         
-        # Base reliability from MTBF
-        # FOR (Forced Outage Rate) = 8760 / MTBF
-        annual_for = 8760 / mtbf_hours
-        unit_reliability = (1 - annual_for) * aging_factor
+        # CORRECT: Exponential reliability from MTBF
+        failure_rate = 1.0 / mtbf_hours  # λ (lambda)
+        hours_per_year = 8760
+        unit_reliability_base = math.exp(-failure_rate * hours_per_year)
+        unit_reliability = unit_reliability_base * aging_factor
         
         # System availability (N+X configuration using binomial)
         sys_avail = 0
@@ -698,38 +701,97 @@ gen_data = available_gens[selected_gen]
 unit_iso_cap = gen_data["iso_rating_mw"]
 unit_site_cap = unit_iso_cap * derate_factor_calc
 
-# FLEET OPTIMIZATION (NOW CONSIDERS BESS)
-n_running_optimal, fleet_options = optimize_fleet_size(
+# ============================================================================
+# ENHANCED FLEET OPTIMIZATION - AVAILABILITY-DRIVEN
+# ============================================================================
+
+# Step 1: Calculate MINIMUM n_running based on load requirements
+n_running_from_load, fleet_options = optimize_fleet_size(
     p_total_avg, p_total_peak, unit_site_cap, step_load_req, gen_data, use_bess
 )
 
-n_running = n_running_optimal
-
-# Redundancy (N+X) with aging reliability model
+# Step 2: Calculate N+X for availability target
 avail_decimal = avail_req / 100
 mtbf_hours = gen_data["mtbf_hours"]
 
-n_reserve = 0
-prob_gen = 0.0  # Initialize to avoid NameError
+# Try different n_running values (not just load-optimized)
+# Availability might require MORE running units than load optimization suggests
+
+best_config = None
 target_met = False
 
-for reserve in range(0, 10):
-    n_total_test = n_running + reserve
-    avg_avail, _ = calculate_availability_weibull(n_total_test, n_running, mtbf_hours, project_years)
-    
-    if avg_avail >= avail_decimal:
-        n_reserve = reserve
-        prob_gen = avg_avail
-        target_met = True
-        break
+# Search range: from load-optimized to +50% more units
+search_min = max(1, n_running_from_load - 2)  # Allow slightly fewer
+search_max = int(n_running_from_load * 1.5) + 5  # Allow significantly more
 
-# If loop completes without meeting target, use best attempt
-if not target_met:
-    n_reserve = 9  # Maximum reserve
-    n_total_test = n_running + n_reserve
-    prob_gen, _ = calculate_availability_weibull(n_total_test, n_running, mtbf_hours, project_years)
+for n_run_candidate in range(search_min, search_max):
+    # For each n_running, find minimum reserve needed
+    for n_res in range(0, 15):  # Extended to N+14 max
+        n_tot = n_run_candidate + n_res
+        
+        # Check if meets capacity
+        if use_bess:
+            if n_run_candidate * unit_site_cap < p_total_avg * 1.05:
+                break  # Too few units
+        else:
+            if n_run_candidate * unit_site_cap < p_total_peak:
+                break  # Can't cover peak
+        
+        # Calculate availability
+        avg_avail, avail_curve_temp = calculate_availability_weibull(
+            n_tot, n_run_candidate, mtbf_hours, project_years
+        )
+        
+        # Check if meets target
+        if avg_avail >= avail_decimal:
+            # Calculate load per unit
+            load_pct = (p_total_avg / (n_run_candidate * unit_site_cap)) * 100
+            
+            # Calculate efficiency at this load
+            eff = get_part_load_efficiency(
+                gen_data["electrical_efficiency"], load_pct, gen_data["type"]
+            )
+            
+            # Score this configuration
+            # Prefer: (1) meets availability, (2) good efficiency, (3) fewer units
+            load_penalty = abs(load_pct - 72) / 100  # Prefer 72% load
+            total_units_penalty = n_tot * 0.01  # Prefer fewer total units
+            
+            score = eff * (1 - load_penalty * 0.3) - total_units_penalty
+            
+            config = {
+                'n_running': n_run_candidate,
+                'n_reserve': n_res,
+                'n_total': n_tot,
+                'availability': avg_avail,
+                'load_pct': load_pct,
+                'efficiency': eff,
+                'score': score,
+                'avail_curve': avail_curve_temp
+            }
+            
+            if best_config is None or score > best_config['score']:
+                best_config = config
+                target_met = True
+            
+            break  # Found minimum reserve for this n_running, move to next
+
+# If no config meets target, use best attempt
+if not target_met or best_config is None:
+    # Fallback: use load-optimized with maximum reserve
+    n_running = n_running_from_load
+    n_reserve = 14  # Maximum
+    n_total = n_running + n_reserve
+    prob_gen, availability_curve = calculate_availability_weibull(
+        n_total, n_running, mtbf_hours, project_years
+    )
     
-    # Show warning in sidebar
+    load_per_unit_pct = (p_total_avg / (n_running * unit_site_cap)) * 100
+    fleet_efficiency_temp = get_part_load_efficiency(
+        gen_data["electrical_efficiency"], load_per_unit_pct, gen_data["type"]
+    )
+    
+    # Show warning
     availability_gap = (avail_req - prob_gen * 100)
     st.sidebar.error(f"⚠️ **Availability Target Not Met**")
     st.sidebar.warning(f"Target: {avail_req:.3f}%\n\n"
@@ -737,47 +799,34 @@ if not target_met:
                       f"Gap: {availability_gap:.3f}%\n\n"
                       f"Using maximum N+{n_reserve} configuration.")
     st.sidebar.info("💡 **Recommendations:**\n"
-                   "- Use higher reliability generators\n"
-                   "- Add more redundancy (custom)\n"
-                   "- Consider hybrid approach\n"
-                   "- Review maintenance strategy")
+                   "- Use higher MTBF generators (Gas Turbine: 80k hrs)\n"
+                   "- Reduce project life for analysis\n"
+                   "- Accept lower availability target\n"
+                   "- Consider dual fuel + grid backup")
+else:
+    # Use best configuration found
+    n_running = best_config['n_running']
+    n_reserve = best_config['n_reserve']
+    n_total = best_config['n_total']
+    prob_gen = best_config['availability']
+    availability_curve = best_config['avail_curve']
+    load_per_unit_pct = best_config['load_pct']
+    fleet_efficiency_temp = best_config['efficiency']
+    
+    # Show optimization result
+    if n_running != n_running_from_load:
+        diff = n_running - n_running_from_load
+        if diff > 0:
+            st.sidebar.info(f"📊 **Availability-Driven Sizing:**\n\n"
+                          f"Added {diff} units to meet {avail_req:.2f}% target\n\n"
+                          f"Load-optimal: {n_running_from_load} units\n"
+                          f"Availability-driven: {n_running} units")
+        else:
+            st.sidebar.success(f"✅ **Optimized Configuration:**\n\n"
+                             f"Reduced to {n_running} units (efficiency-optimized)\n\n"
+                             f"Meets {avail_req:.2f}% with N+{n_reserve}")
 
-n_total = n_running + n_reserve
 installed_cap = n_total * unit_site_cap
-
-# Calculate reliability curve over time
-_, availability_curve = calculate_availability_weibull(n_total, n_running, mtbf_hours, project_years)
-
-# NEW: FEEDBACK LOOP - Optimize n_running if redundancy created low loading
-# This addresses the issue where high availability + redundancy → low load per unit
-load_per_unit_check = (p_total_avg / (n_running * unit_site_cap)) * 100
-
-optimization_iterations = 0
-while load_per_unit_check < 60 and n_running > 1 and use_bess and optimization_iterations < 5:
-    # Try reducing running units (BESS can handle transients)
-    n_running_test = n_running - 1
-    n_total_test = n_running_test + n_reserve
-    
-    # Check minimum capacity with BESS
-    if n_running_test * unit_site_cap < p_total_avg * 1.10:
-        break  # Can't reduce further - need 110% of average minimum
-    
-    # Check if still meets availability
-    avail_test, _ = calculate_availability_weibull(n_total_test, n_running_test, mtbf_hours, project_years)
-    
-    if avail_test >= avail_decimal:
-        # Good - reduce running units
-        n_running = n_running_test
-        n_total = n_running + n_reserve
-        installed_cap = n_total * unit_site_cap
-        load_per_unit_check = (p_total_avg / (n_running * unit_site_cap)) * 100
-        prob_gen = avail_test
-        optimization_iterations += 1
-    else:
-        break  # Can't reduce - would fail availability
-
-if optimization_iterations > 0:
-    st.sidebar.success(f"✅ **Fleet Optimized:** Reduced to {n_running} running units (was {n_running + optimization_iterations}) via BESS peak shaving")
 
 
 # Load Distribution Strategy
@@ -797,12 +846,15 @@ else:
 
 load_per_unit_pct = (p_total_avg / (units_running * unit_site_cap)) * 100
 
-# Fleet efficiency at operating point
-fleet_efficiency = get_part_load_efficiency(
-    gen_data["electrical_efficiency"],
-    load_per_unit_pct,
-    gen_data["type"]
-)
+# Fleet efficiency at operating point (use precalculated if available)
+if 'fleet_efficiency_temp' in locals():
+    fleet_efficiency = fleet_efficiency_temp
+else:
+    fleet_efficiency = get_part_load_efficiency(
+        gen_data["electrical_efficiency"],
+        load_per_unit_pct,
+        gen_data["type"]
+    )
 
 # BESS Sizing (if enabled)
 bess_power_total = 0.0
@@ -1665,19 +1717,32 @@ with t5:
     st.plotly_chart(fig_sens, use_container_width=True)
 
 # ==============================================================================
-# 9. EXCEL EXPORT WITH FALLBACK
+# 9. EXCEL & PDF EXPORT WITH FALLBACK
 # ==============================================================================
 
 st.markdown("---")
 st.subheader("📄 Export Comprehensive Report")
 
-# Check if openpyxl is available
+# Check if libraries are available
 try:
     import openpyxl
     EXCEL_AVAILABLE = True
 except ImportError:
     EXCEL_AVAILABLE = False
-    st.warning("⚠️ **Excel export unavailable.** Install `openpyxl` for full Excel reports. CSV export available below.")
+
+try:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
+
+if not EXCEL_AVAILABLE and not PDF_AVAILABLE:
+    st.warning("⚠️ **Excel and PDF export unavailable.** Install `openpyxl` and/or `reportlab`. CSV export available below.")
 
 if EXCEL_AVAILABLE:
     @st.cache_data
@@ -1796,6 +1861,213 @@ if EXCEL_AVAILABLE:
     )
     
     st.success("✅ Export includes: Executive Summary, Financials, CAPEX, O&M, Technical Specs, Reliability, Sensitivity, Footprint, BESS Sizing")
+
+# PDF Export
+if PDF_AVAILABLE:
+    st.markdown("---")
+    
+    @st.cache_data
+    def create_pdf_export():
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter,
+                               topMargin=0.75*inch, bottomMargin=0.75*inch)
+        
+        story = []
+        styles = getSampleStyleSheet()
+        
+        # Custom styles
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=24,
+            textColor=colors.HexColor('#1f77b4'),
+            spaceAfter=30,
+            alignment=TA_CENTER
+        )
+        
+        heading_style = ParagraphStyle(
+            'CustomHeading',
+            parent=styles['Heading2'],
+            fontSize=14,
+            textColor=colors.HexColor('#2ca02c'),
+            spaceAfter=12,
+            spaceBefore=12
+        )
+        
+        # Title Page
+        story.append(Paragraph("CAT QuickSize v2.0", title_style))
+        story.append(Paragraph("Data Center Primary Power Solutions", styles['Heading3']))
+        story.append(Spacer(1, 0.3*inch))
+        story.append(Paragraph(f"Project: {dc_type} - {p_it:.0f} MW IT Load", styles['Normal']))
+        story.append(Paragraph(f"Generated: {pd.Timestamp.now().strftime('%B %d, %Y at %H:%M')}", styles['Normal']))
+        story.append(Spacer(1, 0.5*inch))
+        
+        # Executive Summary
+        story.append(Paragraph("Executive Summary", heading_style))
+        
+        summary_table_data = [
+            ['Parameter', 'Value'],
+            ['Data Center Type', dc_type],
+            ['IT Load', f'{p_it:.1f} MW'],
+            ['PUE', f'{pue:.2f}'],
+            ['Total DC Load (Avg/Peak)', f'{p_total_avg:.1f} / {p_total_peak:.1f} MW'],
+            ['Generator Model', selected_gen],
+            ['Fleet Configuration', f'{n_running}+{n_reserve} ({n_total} total units)'],
+            ['Installed Capacity', f'{installed_cap:.1f} MW'],
+            ['Availability Target', f'{avail_req:.3f}%'],
+            ['Availability Achieved', f'{prob_gen*100:.3f}%'],
+            ['Target Met', 'Yes ✓' if target_met else 'No ✗'],
+        ]
+        
+        summary_table = Table(summary_table_data, colWidths=[3.5*inch, 2.5*inch])
+        summary_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+        
+        story.append(summary_table)
+        story.append(Spacer(1, 0.3*inch))
+        
+        # Technical Configuration
+        story.append(Paragraph("Technical Configuration", heading_style))
+        
+        tech_table_data = [
+            ['Specification', 'Value'],
+            ['Load per Unit', f'{load_per_unit_pct:.1f}%'],
+            ['Fleet Efficiency', f'{fleet_efficiency*100:.1f}%'],
+            ['Operating Strategy', load_strategy],
+            ['BESS Capacity', f'{bess_power_total:.1f} MW / {bess_energy_total:.1f} MWh' if use_bess else 'Not Included'],
+            ['Connection Voltage', f'{rec_voltage_kv} kV'],
+            ['Primary Fuel', fuel_mode],
+            ['PUE (Operating)', f'{pue_actual:.2f}'],
+        ]
+        
+        tech_table = Table(tech_table_data, colWidths=[3.5*inch, 2.5*inch])
+        tech_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+        
+        story.append(tech_table)
+        story.append(PageBreak())
+        
+        # Financial Summary
+        story.append(Paragraph("Financial Summary", heading_style))
+        
+        financial_table_data = [
+            ['Metric', 'Value'],
+            ['Total CAPEX', f'${total_capex_dynamic:.2f}M'],
+            ['LCOE (after tax)', f'${lcoe_dyn:.4f}/kWh'],
+            ['Benchmark Price', f'${benchmark_price:.4f}/kWh'],
+            ['Gas Price (total)', f'${total_gas_price:.2f}/MMBtu'],
+            ['Annual Energy', f'{mwh_year:,.0f} MWh'],
+            ['Annual Fuel Cost', f'${fuel_cost_year/1e6:.2f}M'],
+            ['Annual O&M Cost', f'${om_cost_year/1e6:.2f}M'],
+            ['Annual Savings', f'${annual_savings/1e6:.2f}M'],
+            ['NPV (20 years)', f'${npv_dyn/1e6:.2f}M'],
+            ['Simple Payback', f'{payback_dyn:.1f} years' if annual_savings > 0 else 'N/A'],
+        ]
+        
+        financial_table = Table(financial_table_data, colWidths=[3.5*inch, 2.5*inch])
+        financial_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+        
+        story.append(financial_table)
+        story.append(Spacer(1, 0.3*inch))
+        
+        # CAPEX Breakdown
+        story.append(Paragraph("CAPEX Breakdown", heading_style))
+        
+        capex_table_data = [['Item', 'Cost (M USD)']]
+        for idx, row in edited_capex.iterrows():
+            capex_table_data.append([row['Item'], f"${row['Cost (M USD)']:.2f}M"])
+        capex_table_data.append(['TOTAL', f"${total_capex_dynamic:.2f}M"])
+        
+        capex_table = Table(capex_table_data, colWidths=[3.5*inch, 2.5*inch])
+        capex_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+            ('LINEABOVE', (0, -1), (-1, -1), 2, colors.black),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+        
+        story.append(capex_table)
+        story.append(PageBreak())
+        
+        # Environmental
+        story.append(Paragraph("Environmental Performance", heading_style))
+        
+        env_table_data = [
+            ['Parameter', 'Value'],
+            ['NOx Emissions', f'{nox_lb_hr:.2f} lb/hr'],
+            ['CO Emissions', f'{co_lb_hr:.2f} lb/hr'],
+            ['CO₂ Emissions (Annual)', f'{co2_ton_yr:,.0f} tons/year'],
+            ['Carbon Cost (Annual)', f'${carbon_cost_year/1e6:.2f}M/year'],
+            ['Site Footprint', f'{disp_area:.2f} {disp_area_unit}'],
+            ['Water Use (WUE)', f'{wue:.1f} L/kWh'],
+        ]
+        
+        env_table = Table(env_table_data, colWidths=[3.5*inch, 2.5*inch])
+        env_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+        
+        story.append(env_table)
+        story.append(Spacer(1, 0.5*inch))
+        
+        # Footer
+        story.append(Spacer(1, 0.5*inch))
+        footer_style = ParagraphStyle('Footer', parent=styles['Normal'], 
+                                     fontSize=8, textColor=colors.grey, 
+                                     alignment=TA_CENTER)
+        story.append(Paragraph("CAT QuickSize v2.0 | Caterpillar Electric Power | 2026", footer_style))
+        story.append(Paragraph("For internal use only. Not for redistribution.", footer_style))
+        
+        # Build PDF
+        doc.build(story)
+        buffer.seek(0)
+        return buffer
+    
+    pdf_data = create_pdf_export()
+    
+    col_pdf1, col_pdf2 = st.columns(2)
+    
+    with col_pdf1:
+        st.download_button(
+            label="📄 Download PDF Proposal (4 Pages)",
+            data=pdf_data,
+            file_name=f"CAT_Proposal_{dc_type.replace(' ','_')}_{p_it:.0f}MW_{pd.Timestamp.now().strftime('%Y%m%d')}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+    
+    with col_pdf2:
+        st.info("📄 **PDF Includes:** Executive Summary, Technical Config, Financials, CAPEX, Environmental")
+
+else:
+    st.info("💡 **PDF export unavailable.** Install `reportlab` for PDF proposals: `pip install reportlab`")
 
 else:
     # Fallback: CSV exports
