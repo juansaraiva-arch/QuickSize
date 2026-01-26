@@ -228,11 +228,14 @@ def calculate_bess_reliability_credit(bess_power_mw, bess_energy_mwh,
     """
     Calculate how many genset equivalents BESS can replace for reliability
     
+    IMPORTANT: BESS cannot cover full MTTR (48 hrs), only provides bridge power
+    while backup gensets start up (typically 2-4 hours)
+    
     Parameters:
     - bess_power_mw: BESS power capacity (MW)
     - bess_energy_mwh: BESS energy capacity (MWh)
     - unit_capacity_mw: Single generator capacity (MW)
-    - mttr_hours: Mean Time To Repair (default 48 hrs = 2 days)
+    - mttr_hours: Mean Time To Repair (default 48 hrs, but BESS covers 2-4 hrs)
     
     Returns:
     - effective_credit: Number of gensets BESS can replace (float)
@@ -241,19 +244,23 @@ def calculate_bess_reliability_credit(bess_power_mw, bess_energy_mwh,
     if bess_power_mw <= 0 or bess_energy_mwh <= 0:
         return 0.0, {}
     
+    # BESS realistically covers 2-4 hours until backup gensets arrive or repair starts
+    # NOT the full MTTR of 48 hours
+    realistic_coverage_hrs = 2.0  # Conservative: 2 hours
+    
     # Power-based credit: How many units can BESS replace instantly
     power_credit = bess_power_mw / unit_capacity_mw
     
     # Energy-based credit: How long can BESS sustain that power
-    bess_duration_hrs = bess_energy_mwh / bess_power_mw
-    energy_credit = bess_energy_mwh / (unit_capacity_mw * mttr_hours)
+    bess_duration_hrs = bess_energy_mwh / bess_power_mw if bess_power_mw > 0 else 0
+    energy_credit = bess_energy_mwh / (unit_capacity_mw * realistic_coverage_hrs)
     
     # Take minimum (bottleneck)
     raw_credit = min(power_credit, energy_credit)
     
     # Apply factors:
     bess_availability = 0.98  # BESS itself has ~98% availability
-    coverage_factor = 0.60    # Balanced: 60% credit (conservative but realistic)
+    coverage_factor = 0.70    # Increased from 0.60 to 0.70 (less conservative)
     
     effective_credit = raw_credit * bess_availability * coverage_factor
     
@@ -264,7 +271,8 @@ def calculate_bess_reliability_credit(bess_power_mw, bess_energy_mwh,
         'bess_availability': bess_availability,
         'coverage_factor': coverage_factor,
         'effective_credit': effective_credit,
-        'bess_duration_hrs': bess_duration_hrs
+        'bess_duration_hrs': bess_duration_hrs,
+        'realistic_coverage_hrs': realistic_coverage_hrs
     }
     
     return effective_credit, credit_breakdown
@@ -1020,8 +1028,18 @@ reliability_configs.append(best_config_a)
 
 # Configuration B: BESS Transient Only
 if use_bess:
+    # With BESS for peak shaving, we can optimize n_running for better efficiency
+    # Target: 70-75% load per unit (sweet spot)
+    target_load_optimal = 72
+    n_running_optimal_b = round(p_total_avg / (unit_site_cap * (target_load_optimal/100)))
+    
+    # Ensure minimum capacity
+    n_running_optimal_b = max(n_running_optimal_b, int(p_total_avg * 1.05 / unit_site_cap))
+    
     best_config_b = None
-    for n_run in range(search_min_a, search_max_a):
+    
+    # Search around optimal point
+    for n_run in range(max(1, n_running_optimal_b - 3), n_running_optimal_b + 6):
         capacity_check = n_run * unit_site_cap >= p_total_avg * 1.05
         if not capacity_check:
             continue
@@ -1032,18 +1050,29 @@ if use_bess:
             avg_avail, _ = calculate_availability_weibull(n_tot, n_run, mtbf_hours, project_years, gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"])
             
             if avg_avail >= avail_decimal:
-                best_config_b = {
-                    'name': 'B: BESS Transient',
-                    'n_running': n_run,
-                    'n_reserve': n_res,
-                    'n_total': n_tot,
-                    'bess_mw': bess_power_transient,
-                    'bess_mwh': bess_energy_transient,
-                    'bess_credit': 0,
-                    'availability': avg_avail
-                }
+                # Calculate load and efficiency
+                load_pct_b = (p_total_avg / (n_run * unit_site_cap)) * 100
+                eff_b = get_part_load_efficiency(gen_data["electrical_efficiency"], load_pct_b, gen_data["type"])
+                
+                # Score: prefer efficiency near 72% load
+                score_b = eff_b - abs(load_pct_b - 72) * 0.01
+                
+                if best_config_b is None or score_b > best_config_b.get('score', 0):
+                    best_config_b = {
+                        'name': 'B: BESS Transient',
+                        'n_running': n_run,
+                        'n_reserve': n_res,
+                        'n_total': n_tot,
+                        'bess_mw': bess_power_transient,
+                        'bess_mwh': bess_energy_transient,
+                        'bess_credit': 0,
+                        'availability': avg_avail,
+                        'load_pct': load_pct_b,
+                        'efficiency': eff_b,
+                        'score': score_b
+                    }
                 break
-        if best_config_b:
+        if best_config_b and best_config_b['n_total'] == n_tot:
             break
     
     if best_config_b:
@@ -1051,49 +1080,88 @@ if use_bess:
 
 # Configuration C: BESS Hybrid (Balanced)
 if use_bess and bess_reliability_enabled:
-    # Calculate BESS credit for different BESS sizes
-    bess_multipliers = {
-        'Hybrid (Balanced)': 2.0,      # 2x transient size
-        'Reliability Priority': 3.5    # 3.5x transient size
-    }
+    # For reliability credit, BESS provides BRIDGE POWER while backup gensets start
+    # Typical startup time: 30 seconds to 2 minutes
+    # BESS coverage: 2-4 hours to cover multiple start attempts + sync time
     
-    multiplier = bess_multipliers.get(bess_strategy, 2.0)
-    bess_power_hybrid = bess_power_transient * multiplier
-    bess_energy_hybrid = bess_energy_transient * multiplier
+    # Start with efficiency-optimized n_running (same as Config B)
+    target_load_optimal = 72
+    n_running_optimal_c = round(p_total_avg / (unit_site_cap * (target_load_optimal/100)))
+    n_running_optimal_c = max(n_running_optimal_c, int(p_total_avg * 1.05 / unit_site_cap))
     
-    # Calculate BESS reliability credit
+    # Calculate BESS size based on strategy
+    # Conservative approach: Size to cover 2-4 gensets worth of power for 2 hours
+    if bess_strategy == 'Hybrid (Balanced)':
+        # Replace 2-3 gensets of reserve
+        target_gensets_covered = 3
+        bess_coverage_hrs = 2.0
+    else:  # Reliability Priority
+        # Replace 4-5 gensets of reserve
+        target_gensets_covered = 5
+        bess_coverage_hrs = 2.5
+    
+    # BESS sizing
+    # Power: Must handle peak + margin (at least equal to transient requirements)
+    # Energy: Must sustain target_gensets × capacity × coverage_hours
+    bess_power_hybrid = max(
+        bess_power_transient,  # At least transient requirements
+        target_gensets_covered * unit_site_cap  # Or gensets coverage
+    )
+    
+    bess_energy_hybrid = bess_power_hybrid * bess_coverage_hrs
+    
+    # Ensure energy is sufficient for genset replacement
+    min_energy_for_credit = target_gensets_covered * unit_site_cap * bess_coverage_hrs
+    bess_energy_hybrid = max(bess_energy_hybrid, min_energy_for_credit)
+    
+    # Calculate actual BESS reliability credit
     bess_credit_units, credit_breakdown = calculate_bess_reliability_credit(
         bess_power_hybrid, bess_energy_hybrid, unit_site_cap, mttr_hours
     )
     
     # Search for best config with BESS credit
     best_config_c = None
-    for n_run in range(search_min_a, search_max_a):
+    
+    for n_run in range(max(1, n_running_optimal_c - 3), n_running_optimal_c + 6):
         capacity_check = n_run * unit_site_cap >= p_total_avg * 1.05
         if not capacity_check:
             continue
         
         for n_res_base in range(0, 20):
             # Apply BESS credit to reduce reserve requirement
-            n_res_effective = max(1, n_res_base - int(bess_credit_units))
+            # Be conservative: only credit 50% of calculated value
+            bess_credit_conservative = bess_credit_units * 0.5
+            bess_credit_int = int(bess_credit_conservative)
+            n_res_effective = max(1, n_res_base - bess_credit_int)
             n_tot = n_run + n_res_effective
             
             avg_avail, _ = calculate_availability_weibull(n_tot, n_run, mtbf_hours, project_years, gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"])
             
             if avg_avail >= avail_decimal:
-                best_config_c = {
-                    'name': f'C: {bess_strategy}',
-                    'n_running': n_run,
-                    'n_reserve': n_res_effective,
-                    'n_total': n_tot,
-                    'bess_mw': bess_power_hybrid,
-                    'bess_mwh': bess_energy_hybrid,
-                    'bess_credit': bess_credit_units,
-                    'availability': avg_avail,
-                    'credit_breakdown': credit_breakdown
-                }
+                # Calculate load and efficiency
+                load_pct_c = (p_total_avg / (n_run * unit_site_cap)) * 100
+                eff_c = get_part_load_efficiency(gen_data["electrical_efficiency"], load_pct_c, gen_data["type"])
+                
+                # Score: prefer efficiency + fewer total units
+                score_c = eff_c - abs(load_pct_c - 72) * 0.01 - n_tot * 0.001
+                
+                if best_config_c is None or score_c > best_config_c.get('score', 0):
+                    best_config_c = {
+                        'name': f'C: {bess_strategy}',
+                        'n_running': n_run,
+                        'n_reserve': n_res_effective,
+                        'n_total': n_tot,
+                        'bess_mw': bess_power_hybrid,
+                        'bess_mwh': bess_energy_hybrid,
+                        'bess_credit': bess_credit_conservative,  # Report conservative value
+                        'availability': avg_avail,
+                        'credit_breakdown': credit_breakdown,
+                        'load_pct': load_pct_c,
+                        'efficiency': eff_c,
+                        'score': score_c
+                    }
                 break
-        if best_config_c:
+        if best_config_c and best_config_c['n_total'] == n_tot:
             break
     
     if best_config_c:
@@ -1733,16 +1801,22 @@ with t2:
             bess_om = config['bess_mwh'] * 10    # k$/MWh-year
             total_om = (genset_om + bess_om) / 1000  # M$/year
             
-            # Calculate operating parameters
+            # Use pre-calculated values if available, otherwise calculate
             running_units = config['n_running']
-            load_per_unit = (p_total_avg / (running_units * unit_site_cap)) * 100
             
-            # Fleet efficiency at operating point
-            config_efficiency = get_part_load_efficiency(
-                gen_data["electrical_efficiency"],
-                load_per_unit,
-                gen_data["type"]
-            )
+            if 'load_pct' in config:
+                load_per_unit = config['load_pct']
+            else:
+                load_per_unit = (p_total_avg / (running_units * unit_site_cap)) * 100
+            
+            if 'efficiency' in config:
+                config_efficiency = config['efficiency']
+            else:
+                config_efficiency = get_part_load_efficiency(
+                    gen_data["electrical_efficiency"],
+                    load_per_unit,
+                    gen_data["type"]
+                )
             
             # Annual energy and fuel
             annual_energy_gwh = (p_total_avg * 8760 * capacity_factor) / 1000  # GWh
