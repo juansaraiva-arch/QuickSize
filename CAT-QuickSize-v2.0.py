@@ -25,6 +25,8 @@ leps_gas_library = {
         "emissions_nox": 0.5,
         "emissions_co": 2.5,
         "mtbf_hours": 50000,  # NEW: Mean Time Between Failures
+        "maintenance_interval_hrs": 1000,  # Time between planned maintenance
+        "maintenance_duration_hrs": 48,    # Downtime per maintenance event
         "default_for": 2.0, 
         "default_maint": 5.0,
         "est_cost_kw": 775.0,      
@@ -44,6 +46,8 @@ leps_gas_library = {
         "emissions_nox": 0.5,
         "emissions_co": 2.1,
         "mtbf_hours": 48000,
+        "maintenance_interval_hrs": 1000,
+        "maintenance_duration_hrs": 48,
         "default_for": 2.0,
         "default_maint": 5.0,
         "est_cost_kw": 575.0,
@@ -63,6 +67,8 @@ leps_gas_library = {
         "emissions_nox": 0.3,
         "emissions_co": 2.3,
         "mtbf_hours": 52000,
+        "maintenance_interval_hrs": 1000,
+        "maintenance_duration_hrs": 48,
         "default_for": 2.5,
         "default_maint": 6.0,
         "est_cost_kw": 575.0,
@@ -82,6 +88,8 @@ leps_gas_library = {
         "emissions_nox": 0.5,
         "emissions_co": 1.8,
         "mtbf_hours": 55000,
+        "maintenance_interval_hrs": 1000,
+        "maintenance_duration_hrs": 48,
         "default_for": 3.0,
         "default_maint": 5.0,
         "est_cost_kw": 675.0,
@@ -101,6 +109,8 @@ leps_gas_library = {
         "emissions_nox": 0.6,
         "emissions_co": 0.6,
         "mtbf_hours": 80000,  # Turbines more reliable
+        "maintenance_interval_hrs": 8000,  # Less frequent maintenance
+        "maintenance_duration_hrs": 120,   # Longer downtime per event
         "default_for": 1.5,
         "default_maint": 2.0,
         "est_cost_kw": 775.0,
@@ -120,6 +130,8 @@ leps_gas_library = {
         "emissions_nox": 0.5,
         "emissions_co": 0.5,
         "mtbf_hours": 60000,
+        "maintenance_interval_hrs": 2500,  # Medium speed: less frequent
+        "maintenance_duration_hrs": 72,    # Longer downtime
         "default_for": 3.0, 
         "default_maint": 5.0,
         "est_cost_kw": 700.0,
@@ -257,23 +269,39 @@ def calculate_bess_reliability_credit(bess_power_mw, bess_energy_mwh,
     
     return effective_credit, credit_breakdown
 
-def calculate_availability_weibull(n_total, n_running, mtbf_hours, project_years):
+def calculate_availability_weibull(n_total, n_running, mtbf_hours, project_years, 
+                                  maintenance_interval_hrs=1000, maintenance_duration_hrs=48):
     """
-    Reliability model using industry standard availability formula
+    Reliability model using industry standard availability formula INCLUDING planned maintenance
     
-    Availability = MTBF / (MTBF + MTTR)
+    Availability = MTBF / (MTBF + MTTR + Planned_Maintenance_Time)
     
-    For long-term analysis, we use year 1 availability (conservative but realistic)
-    Aging is captured separately in O&M costs and overhaul schedules
+    This is the CORRECT formula that accounts for:
+    1. Random failures (MTBF/MTTR)
+    2. Planned maintenance outages (often overlooked!)
+    
+    For High Speed RICE:
+    - Maintenance every 1000 hrs → 8.76 events/year
+    - 48 hrs per event → 420 hrs/year unavailable
+    - This is 4.8% unavailability just from maintenance!
     """
     # Typical MTTR for power generation equipment
-    mttr_hours = 48  # 48 hours average repair time
+    mttr_hours = 48  # 48 hours average repair time for failures
     
-    # Base unit availability (year 1, no aging)
-    unit_availability = mtbf_hours / (mtbf_hours + mttr_hours)
+    # Calculate planned maintenance unavailability
+    # Annual hours of planned maintenance
+    annual_maintenance_hrs = (8760 / maintenance_interval_hrs) * maintenance_duration_hrs
     
-    # For MTBF = 48,000 hrs:
-    # unit_availability = 48000 / 48048 = 0.999000 = 99.90%
+    # Total unavailability = MTTR (failures) + Planned Maintenance
+    total_unavailable_hrs = mttr_hours + annual_maintenance_hrs
+    
+    # Unit availability (corrected formula)
+    unit_availability = mtbf_hours / (mtbf_hours + total_unavailable_hrs)
+    
+    # Example for High Speed RICE (MTBF=48000, maint every 1000 hrs for 48 hrs):
+    # annual_maintenance = (8760/1000) × 48 = 420.5 hrs
+    # availability = 48000 / (48000 + 48 + 420.5) = 48000 / 48468.5 = 99.03%
+    # vs OLD (incorrect): 48000 / 48048 = 99.90% ← 0.87% too optimistic!
     
     # System availability (N+X configuration using binomial)
     # P(system works) = P(at least n_running units are available)
@@ -286,7 +314,7 @@ def calculate_availability_weibull(n_total, n_running, mtbf_hours, project_years
     # For availability curve over time, apply modest aging (0.1% per year)
     availability_over_time = []
     for year in range(1, project_years + 1):
-        # Conservative aging: 0.1% per year (vs 0.5% before which was too aggressive)
+        # Conservative aging: 0.1% per year
         aging_factor = 1.0 - (year * 0.001)
         aging_factor = max(0.95, aging_factor)  # Floor at 95%
         
@@ -801,6 +829,100 @@ selected_gen = st.sidebar.selectbox(
 
 gen_data = available_gens[selected_gen]
 
+# ============================================================================
+# GENERATOR PARAMETERS - EDITABLE (NEW FEATURE)
+# ============================================================================
+with st.sidebar.expander("⚙️ Generator Parameters (Editable)", expanded=False):
+    st.markdown("**Reliability & Maintenance:**")
+    
+    # MTBF (Mean Time Between Failures)
+    mtbf_edit = st.number_input(
+        "MTBF (hours)",
+        value=gen_data["mtbf_hours"],
+        min_value=10000,
+        max_value=150000,
+        step=1000,
+        help="Mean Time Between Failures - affects unplanned outages"
+    )
+    gen_data["mtbf_hours"] = mtbf_edit
+    
+    # Maintenance Interval
+    maint_interval_edit = st.number_input(
+        "Maintenance Interval (hrs)",
+        value=gen_data["maintenance_interval_hrs"],
+        min_value=500,
+        max_value=20000,
+        step=100,
+        help="Hours between planned maintenance events"
+    )
+    gen_data["maintenance_interval_hrs"] = maint_interval_edit
+    
+    # Maintenance Duration
+    maint_duration_edit = st.number_input(
+        "Maintenance Duration (hrs)",
+        value=gen_data["maintenance_duration_hrs"],
+        min_value=12,
+        max_value=240,
+        step=6,
+        help="Downtime per maintenance event"
+    )
+    gen_data["maintenance_duration_hrs"] = maint_duration_edit
+    
+    # Calculate and show availability impact
+    annual_maint_hrs = (8760 / maint_interval_edit) * maint_duration_edit
+    unit_avail = mtbf_edit / (mtbf_edit + 48 + annual_maint_hrs)
+    
+    st.markdown("---")
+    st.markdown("**Calculated Unit Availability:**")
+    st.metric("Single Unit", f"{unit_avail*100:.2f}%")
+    
+    maint_unavail = (annual_maint_hrs / 8760) * 100
+    failure_unavail = (48 / (mtbf_edit + 48)) * 100
+    
+    st.caption(f"📊 Breakdown:")
+    st.caption(f"  • Planned Maint: {maint_unavail:.2f}% unavailable")
+    st.caption(f"  • Failures (MTTR=48h): {failure_unavail:.3f}% unavailable")
+    st.caption(f"  • **Total: {((1-unit_avail)*100):.2f}% unavailable**")
+    
+    st.markdown("---")
+    st.markdown("**Performance:**")
+    
+    # Efficiency
+    eff_edit = st.number_input(
+        "Electrical Efficiency",
+        value=gen_data["electrical_efficiency"],
+        min_value=0.25,
+        max_value=0.60,
+        step=0.001,
+        format="%.3f",
+        help="Electrical efficiency (HHV basis)"
+    )
+    gen_data["electrical_efficiency"] = eff_edit
+    
+    # Step Load Capability
+    step_edit = st.number_input(
+        "Step Load Capability (%)",
+        value=gen_data["step_load_pct"],
+        min_value=0.0,
+        max_value=100.0,
+        step=5.0,
+        help="Maximum % load that can be accepted in one step"
+    )
+    gen_data["step_load_pct"] = step_edit
+    
+    # Ramp Rate
+    ramp_edit = st.number_input(
+        "Ramp Rate (MW/s)",
+        value=gen_data["ramp_rate_mw_s"],
+        min_value=0.1,
+        max_value=5.0,
+        step=0.1,
+        help="Rate of load change capability"
+    )
+    gen_data["ramp_rate_mw_s"] = ramp_edit
+    
+    st.success("✅ Custom parameters applied")
+
 # Derated capacity
 unit_iso_cap = gen_data["iso_rating_mw"]
 unit_site_cap = unit_iso_cap * derate_factor_calc
@@ -855,7 +977,7 @@ for n_run in range(search_min_a, search_max_a):
     for n_res in range(0, 20):  # Extended to N+19
         n_tot = n_run + n_res
         
-        avg_avail, _ = calculate_availability_weibull(n_tot, n_run, mtbf_hours, project_years)
+        avg_avail, _ = calculate_availability_weibull(n_tot, n_run, mtbf_hours, project_years, gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"])
         
         if avg_avail >= avail_decimal:
             best_config_a = {
@@ -907,7 +1029,7 @@ if use_bess:
         for n_res in range(0, 20):
             n_tot = n_run + n_res
             
-            avg_avail, _ = calculate_availability_weibull(n_tot, n_run, mtbf_hours, project_years)
+            avg_avail, _ = calculate_availability_weibull(n_tot, n_run, mtbf_hours, project_years, gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"])
             
             if avg_avail >= avail_decimal:
                 best_config_b = {
@@ -956,7 +1078,7 @@ if use_bess and bess_reliability_enabled:
             n_res_effective = max(1, n_res_base - int(bess_credit_units))
             n_tot = n_run + n_res_effective
             
-            avg_avail, _ = calculate_availability_weibull(n_tot, n_run, mtbf_hours, project_years)
+            avg_avail, _ = calculate_availability_weibull(n_tot, n_run, mtbf_hours, project_years, gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"])
             
             if avg_avail >= avail_decimal:
                 best_config_c = {
@@ -1016,7 +1138,7 @@ else:
 installed_cap = n_total * unit_site_cap
 
 # Calculate reliability curve
-_, availability_curve = calculate_availability_weibull(n_total, n_running, mtbf_hours, project_years)
+_, availability_curve = calculate_availability_weibull(n_total, n_running, mtbf_hours, project_years, gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"])
 
 # Show optimization result in sidebar
 if use_bess and bess_reliability_enabled and 'bess_credit' in selected_config:
@@ -1178,7 +1300,7 @@ if is_area_exceeded and enable_footprint_limit:
         reduced_total_area = (reduced_area_gen + storage_area_m2 + area_chp + area_bess + area_sub) * 1.2
         
         # Calculate new availability
-        reduced_avail, _ = calculate_availability_weibull(reduced_n, n_running, mtbf_hours, project_years)
+        reduced_avail, _ = calculate_availability_weibull(reduced_n, n_running, mtbf_hours, project_years, gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"])
         
         if reduced_total_area <= max_area_m2:
             footprint_recommendations.append({
