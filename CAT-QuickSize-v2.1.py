@@ -105,7 +105,7 @@ leps_gas_library = {
         "electrical_efficiency": 0.354,
         "heat_rate_lhv": 9630,
         "step_load_pct": 15.0,
-        "ramp_rate_mw_s": 2.0,
+        "ramp_rate_mw_s": 2.0, 
         "emissions_nox": 0.6,
         "emissions_co": 0.6,
         "mtbf_hours": 80000,
@@ -202,6 +202,7 @@ def calculate_bess_requirements(p_net_req_avg, p_net_req_peak, step_load_req,
     )
     
     # Energy Duration Calculation
+    # C-rate consideration
     c_rate = 1.0  # 1C = discharge in 1 hour
     bess_energy_total = bess_power_total / c_rate
     
@@ -227,14 +228,22 @@ def calculate_bess_reliability_credit(bess_power_mw, bess_energy_mwh,
     if bess_power_mw <= 0 or bess_energy_mwh <= 0:
         return 0.0, {}
     
+    # BESS realistically covers 2-4 hours until backup gensets arrive or repair starts
     realistic_coverage_hrs = 2.0  # Conservative: 2 hours
     
+    # Power-based credit: How many units can BESS replace instantly
     power_credit = bess_power_mw / unit_capacity_mw
+    
+    # Energy-based credit: How long can BESS sustain that power
+    bess_duration_hrs = bess_energy_mwh / bess_power_mw if bess_power_mw > 0 else 0
     energy_credit = bess_energy_mwh / (unit_capacity_mw * realistic_coverage_hrs)
+    
+    # Take minimum (bottleneck)
     raw_credit = min(power_credit, energy_credit)
     
-    bess_availability = 0.98
-    coverage_factor = 0.70
+    # Apply factors:
+    bess_availability = 0.98  # BESS itself has ~98% availability
+    coverage_factor = 0.70    # Increased from 0.60 to 0.70 (less conservative)
     
     effective_credit = raw_credit * bess_availability * coverage_factor
     
@@ -245,6 +254,7 @@ def calculate_bess_reliability_credit(bess_power_mw, bess_energy_mwh,
         'bess_availability': bess_availability,
         'coverage_factor': coverage_factor,
         'effective_credit': effective_credit,
+        'bess_duration_hrs': bess_duration_hrs,
         'realistic_coverage_hrs': realistic_coverage_hrs
     }
     
@@ -255,23 +265,35 @@ def calculate_availability_weibull(n_total, n_running, mtbf_hours, project_years
     """
     Reliability model using industry standard availability formula INCLUDING planned maintenance
     """
-    mttr_hours = 48
+    # Typical MTTR for power generation equipment
+    mttr_hours = 48  # 48 hours average repair time for failures
+    
+    # Calculate planned maintenance unavailability
     annual_maintenance_hrs = (8760 / maintenance_interval_hrs) * maintenance_duration_hrs
+    
+    # Total unavailability = MTTR (failures) + Planned Maintenance
     total_unavailable_hrs = mttr_hours + annual_maintenance_hrs
+    
+    # Unit availability (corrected formula)
     unit_availability = mtbf_hours / (mtbf_hours + total_unavailable_hrs)
     
+    # System availability (N+X configuration using binomial)
     sys_avail = 0
     for k in range(n_running, n_total + 1):
         comb = math.comb(n_total, k)
         prob = comb * (unit_availability ** k) * ((1 - unit_availability) ** (n_total - k))
         sys_avail += prob
     
+    # For availability curve over time, apply modest aging (0.1% per year)
     availability_over_time = []
     for year in range(1, project_years + 1):
+        # Conservative aging: 0.1% per year
         aging_factor = 1.0 - (year * 0.001)
-        aging_factor = max(0.95, aging_factor)
+        aging_factor = max(0.95, aging_factor)  # Floor at 95%
+        
         aged_unit_availability = unit_availability * aging_factor
         
+        # Recalculate system availability with aged units
         sys_avail_year = 0
         for k in range(n_running, n_total + 1):
             comb = math.comb(n_total, k)
@@ -282,7 +304,7 @@ def calculate_availability_weibull(n_total, n_running, mtbf_hours, project_years
     
     return sys_avail, availability_over_time
 
-# --- FIXED: OPTIMIZATION FUNCTION (PRIORITIZE CAPEX & STEP LOAD) ---
+# --- FIXED: OPTIMIZATION FUNCTION (PRIORITIZE CAPEX) ---
 def optimize_fleet_size(p_net_req_avg, p_net_req_peak, unit_cap, step_load_req, gen_data, use_bess=False):
     """
     Optimización corregida: Considera explícitamente la reserva rodante para Step Load.
@@ -340,15 +362,21 @@ def optimize_fleet_size(p_net_req_avg, p_net_req_peak, unit_cap, step_load_req, 
         return n_running_base, {n_running_base: {'efficiency': 0.35, 'load_pct': 80, 'score': 0}}
 
 def calculate_macrs_depreciation(capex, project_years):
+    """
+    MACRS 5-year depreciation schedule
+    """
     macrs_schedule = [0.20, 0.32, 0.192, 0.1152, 0.1152, 0.0576]
-    tax_rate = 0.21
+    tax_rate = 0.21  # Federal corporate tax rate
+    
     pv_benefit = 0
-    wacc = 0.08
+    wacc = 0.08  # Use global WACC
+    
     for year, rate in enumerate(macrs_schedule, 1):
         if year > project_years:
             break
         annual_benefit = capex * rate * tax_rate
         pv_benefit += annual_benefit / ((1 + wacc) ** year)
+    
     return pv_benefit
 
 # ==============================================================================
@@ -396,6 +424,7 @@ with st.sidebar:
         "Edge Computing"
     ])
     
+    # PUE defaults
     pue_defaults = {
         "AI Factory (Training)": 1.15,
         "AI Factory (Inference)": 1.20,
@@ -469,9 +498,13 @@ with st.sidebar:
     manual_voltage_kv = 0.0
     if volt_mode == "Manual":
         voltage_option = st.selectbox("Select Voltage Level", [
-            "4.16 kV", "13.8 kV", "34.5 kV", "69 kV", "Custom"
+            "4.16 kV (Low Voltage - Small DCs)",
+            "13.8 kV (Medium Voltage - Standard)",
+            "34.5 kV (High MV - Large Off-Grid DCs)",
+            "69 kV (Sub-Transmission - Very Large)",
+            "Custom"
         ])
-        voltage_map = {"4.16 kV": 4.16, "13.8 kV": 13.8, "34.5 kV": 34.5, "69 kV": 69.0}
+        voltage_map = {"4.16 kV (Low Voltage - Small DCs)": 4.16, "13.8 kV (Medium Voltage - Standard)": 13.8, "34.5 kV (High MV - Large Off-Grid DCs)": 34.5, "69 kV (Sub-Transmission - Very Large)": 69.0}
         if voltage_option == "Custom":
             manual_voltage_kv = st.number_input("Custom Voltage (kV)", 0.4, 230.0, 13.8, step=0.1)
         else:
@@ -667,26 +700,33 @@ if use_bess:
 
 reliability_configs = []
 
-# Configuration A: No BESS (Baseline)
-# Forzamos que n_run respete el criterio de Step Load
-config_a_running = n_running_from_load 
+# ==============================================================================
+# CORRECTED CONFIGURATION A: No BESS (Physics-Based Sizing)
+# ==============================================================================
 
-# Ampliamos búsqueda por si acaso
-search_min_a = config_a_running
-search_max_a = config_a_running + 5
+# 1. Calcular el mínimo de unidades para soportar el Golpe de Carga (Step Load)
+# Lógica: Capacidad Total >= Carga Promedio + (Carga del Golpe - Capacidad de Golpe de Gensets ya encendidos)
+# Simplificación segura: Capacidad Total >= Carga Promedio * (1 + %Step)
+required_capacity_for_step = p_total_avg * (1 + step_load_req / 100.0)
+n_min_step_load = math.ceil(required_capacity_for_step / unit_site_cap)
+
+# 2. Calcular el mínimo para soportar el Pico Anual
+n_min_peak_load = math.ceil(p_total_peak / unit_site_cap)
+
+# 3. El mínimo REAL es el mayor de los dos (el Step Load suele dominar)
+n_start_a = max(n_min_step_load, n_min_peak_load)
+
 best_config_a = None
 
-for n_run in range(search_min_a, search_max_a):
-    # CRITERIO 1: Capacidad Pico
-    if n_run * unit_site_cap < p_total_peak:
-        continue
-        
-    # CRITERIO 2: Reserva Rodante para Step Load (CRÍTICO)
+# Buscamos desde el mínimo calculado hacia arriba (+5 unidades)
+for n_run in range(n_start_a, n_start_a + 5):
+    
+    # Validación doble de seguridad
     current_headroom_mw = (n_run * unit_site_cap) - p_total_avg
     required_step_mw = p_total_avg * (step_load_req / 100.0)
     
     if current_headroom_mw < required_step_mw:
-        continue 
+        continue
     
     for n_res in range(0, 20):
         n_tot = n_run + n_res
@@ -712,15 +752,17 @@ for n_run in range(search_min_a, search_max_a):
     if best_config_a:
         break
 
+# Fallback solo si falla el cálculo matemático (muy improbable)
 if not best_config_a:
      best_config_a = {
-        'name': 'A: No BESS (Fallback)',
-        'n_running': config_a_running,
-        'n_reserve': 1,
-        'n_total': config_a_running + 1,
+        'name': 'A: No BESS (Error)',
+        'n_running': n_start_a,
+        'n_reserve': 2,
+        'n_total': n_start_a + 2,
         'bess_mw': 0, 'bess_mwh': 0, 'bess_credit': 0,
-        'availability': 0.99, 'load_pct': 90, 'efficiency': 0.35
+        'availability': 0.99, 'load_pct': 50.0, 'efficiency': 0.30
      }
+
 reliability_configs.append(best_config_a)
 
 # Configuration B: BESS Transient Only
@@ -1214,6 +1256,7 @@ with t5:
 st.markdown("---")
 st.subheader("📄 Export Comprehensive Report")
 
+# Check if libraries are available
 try:
     import openpyxl
     EXCEL_AVAILABLE = True
@@ -1354,6 +1397,7 @@ if EXCEL_AVAILABLE:
         use_container_width=True
     )
 
+# PDF Export (independent of Excel)
 if PDF_AVAILABLE:
     st.markdown("---")
     
@@ -1366,9 +1410,11 @@ if PDF_AVAILABLE:
         story = []
         styles = getSampleStyleSheet()
         
+        # Custom styles
         title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=24, textColor=colors.HexColor('#1f77b4'), spaceAfter=30, alignment=TA_CENTER)
         heading_style = ParagraphStyle('CustomHeading', parent=styles['Heading2'], fontSize=14, textColor=colors.HexColor('#2ca02c'), spaceAfter=12, spaceBefore=12)
         
+        # Title Page
         story.append(Paragraph("CAT QuickSize v2.1", title_style))
         story.append(Paragraph("Data Center Primary Power Solutions", styles['Heading3']))
         story.append(Spacer(1, 0.3*inch))
@@ -1376,6 +1422,7 @@ if PDF_AVAILABLE:
         story.append(Paragraph(f"Generated: {pd.Timestamp.now().strftime('%B %d, %Y')}", styles['Normal']))
         story.append(Spacer(1, 0.5*inch))
         
+        # Executive Summary
         story.append(Paragraph("Executive Summary", heading_style))
         summary_table_data = [
             ['Parameter', 'Value'],
@@ -1397,6 +1444,7 @@ if PDF_AVAILABLE:
         story.append(summary_table)
         story.append(Spacer(1, 0.3*inch))
         
+        # Financial Summary
         story.append(Paragraph("Financial Summary", heading_style))
         financial_table_data = [
             ['Metric', 'Value'],
