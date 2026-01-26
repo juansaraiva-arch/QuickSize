@@ -977,9 +977,9 @@ best_config_a = None
 
 # Search exhaustively for Config A
 for n_run in range(search_min_a, search_max_a):
-    # Check minimum capacity
-    capacity_min = p_total_peak if not use_bess else p_total_avg * 1.05
-    if n_run * unit_site_cap < capacity_min:
+    # Config A: NO BESS - must ALWAYS cover PEAK load
+    capacity_min_a = p_total_peak
+    if n_run * unit_site_cap < capacity_min_a:
         continue
     
     for n_res in range(0, 20):  # Extended to N+19
@@ -1004,7 +1004,8 @@ for n_run in range(search_min_a, search_max_a):
 
 # If still not found, create fallback with CORRECT availability calculation
 if not best_config_a:
-    fallback_n_run = config_a_running
+    # Fallback: size for peak load
+    fallback_n_run = int(p_total_peak / unit_site_cap) + 1
     fallback_n_res = 14
     fallback_n_tot = fallback_n_run + fallback_n_res
     
@@ -1118,6 +1119,16 @@ if use_bess and bess_reliability_enabled:
     bess_credit_units, credit_breakdown = calculate_bess_reliability_credit(
         bess_power_hybrid, bess_energy_hybrid, unit_site_cap, mttr_hours
     )
+    
+    # DEBUG: Show BESS sizing calculation
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("🔍 **Debug: Config C BESS Sizing**")
+    st.sidebar.caption(f"Target gensets: {target_gensets_covered}")
+    st.sidebar.caption(f"Coverage hrs: {bess_coverage_hrs}")
+    st.sidebar.caption(f"BESS Power: {bess_power_hybrid:.1f} MW")
+    st.sidebar.caption(f"BESS Energy: {bess_energy_hybrid:.1f} MWh")
+    st.sidebar.caption(f"Credit (raw): {bess_credit_units:.2f} units")
+    st.sidebar.caption(f"Credit (50%): {bess_credit_units * 0.5:.2f} units")
     
     # Search for best config with BESS credit
     best_config_c = None
