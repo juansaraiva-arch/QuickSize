@@ -1733,13 +1733,32 @@ with t2:
             bess_om = config['bess_mwh'] * 10    # k$/MWh-year
             total_om = (genset_om + bess_om) / 1000  # M$/year
             
+            # Calculate operating parameters
+            running_units = config['n_running']
+            load_per_unit = (p_total_avg / (running_units * unit_site_cap)) * 100
+            
+            # Fleet efficiency at operating point
+            config_efficiency = get_part_load_efficiency(
+                gen_data["electrical_efficiency"],
+                load_per_unit,
+                gen_data["type"]
+            )
+            
+            # Annual energy and fuel
+            annual_energy_gwh = (p_total_avg * 8760 * capacity_factor) / 1000  # GWh
+            annual_fuel_mmbtu = (annual_energy_gwh * 1000 * 3.412) / config_efficiency  # MMBtu
+            
             comparison_data.append({
                 'Configuration': config['name'],
-                'Gensets': f"{config['n_running']}+{config['n_reserve']}",
+                'Fleet': f"{config['n_running']}+{config['n_reserve']}",
                 'Total Units': config['n_total'],
                 'BESS (MW/MWh)': f"{config['bess_mw']:.0f}/{config['bess_mwh']:.0f}" if config['bess_mw'] > 0 else "None",
-                'BESS Credit': f"{config['bess_credit']:.1f} units" if config['bess_credit'] > 0 else "-",
-                'Availability': f"{config['availability']*100:.4f}%",
+                'Load/Unit (%)': f"{load_per_unit:.1f}%",
+                'Fleet Eff (%)': f"{config_efficiency*100:.1f}%",
+                'BESS Credit': f"{config['bess_credit']:.1f}" if config['bess_credit'] > 0 else "-",
+                'Availability': f"{config['availability']*100:.3f}%",
+                'Energy (GWh/yr)': f"{annual_energy_gwh:.1f}",
+                'Fuel (M MMBtu/yr)': f"{annual_fuel_mmbtu/1e6:.2f}",
                 'CAPEX (M$)': f"${total_capex:.1f}M",
                 'O&M (M$/yr)': f"${total_om:.2f}M"
             })
@@ -1819,6 +1838,140 @@ with t2:
     col_e2.metric("Frequency", f"{freq_hz} Hz")
     col_e3.metric("X\"d", f"{gen_data['reactance_xd_2']:.3f} pu")
     col_e4.metric("Ramp Rate", f"{gen_data['ramp_rate_mw_s']:.1f} MW/s")
+    
+    # ========================================================================
+    # NET EFFICIENCY & HEAT RATE (NEW)
+    # ========================================================================
+    st.markdown("### ⚙️ Net Efficiency & Heat Rate")
+    
+    # Calculate auxiliaries and losses
+    aux_power_pct = 2.0  # Typical: cooling, fuel pumps, controls = 2%
+    mechanical_losses_pct = 1.5  # Bearings, coupling, etc = 1.5%
+    
+    # Gross electrical efficiency (from generator)
+    gross_efficiency = fleet_efficiency
+    
+    # Net efficiency (after auxiliaries)
+    aux_consumption = p_total_avg * (aux_power_pct / 100)
+    net_output = p_total_avg - aux_consumption
+    net_efficiency = gross_efficiency * (1 - aux_power_pct/100)
+    
+    # Heat Rate calculations
+    # Heat Rate = 3412 BTU/kWh / Efficiency
+    # LHV to HHV conversion: HHV = LHV × 1.11 (for natural gas)
+    
+    heat_rate_lhv_btu = 3412 / net_efficiency  # BTU/kWh (LHV)
+    heat_rate_hhv_btu = heat_rate_lhv_btu * 1.11  # BTU/kWh (HHV)
+    
+    # MJ/kWh conversion: 1 BTU = 0.001055 MJ
+    heat_rate_lhv_mj = heat_rate_lhv_btu * 0.001055  # MJ/kWh (LHV)
+    heat_rate_hhv_mj = heat_rate_hhv_btu * 0.001055  # MJ/kWh (HHV)
+    
+    col_eff1, col_eff2, col_eff3, col_eff4 = st.columns(4)
+    
+    with col_eff1:
+        st.metric("Gross Efficiency", f"{gross_efficiency*100:.2f}%")
+        st.caption("At generator terminals")
+    
+    with col_eff2:
+        st.metric("Net Efficiency", f"{net_efficiency*100:.2f}%")
+        st.caption("After auxiliaries")
+    
+    with col_eff3:
+        if is_imperial:
+            st.metric("Heat Rate (HHV)", f"{heat_rate_hhv_btu:.0f}")
+            st.caption("BTU/kWh")
+        else:
+            st.metric("Heat Rate (HHV)", f"{heat_rate_hhv_mj:.2f}")
+            st.caption("MJ/kWh")
+    
+    with col_eff4:
+        if is_imperial:
+            st.metric("Heat Rate (LHV)", f"{heat_rate_lhv_btu:.0f}")
+            st.caption("BTU/kWh")
+        else:
+            st.metric("Heat Rate (LHV)", f"{heat_rate_lhv_mj:.2f}")
+            st.caption("MJ/kWh")
+    
+    # Losses breakdown
+    with st.expander("📊 Efficiency & Losses Breakdown"):
+        st.markdown("**Power Flow (100 MW IT Load Example):**")
+        
+        fuel_input = p_total_avg / net_efficiency
+        
+        losses_data = pd.DataFrame({
+            'Stage': [
+                '1. Fuel Input',
+                '2. Combustion → Shaft',
+                '3. Shaft → Electrical',
+                '4. Gross Electrical',
+                '5. Auxiliaries',
+                '6. Net Output to DC'
+            ],
+            'Power (MW)': [
+                fuel_input,
+                fuel_input * gross_efficiency,
+                p_total_avg,
+                p_total_avg,
+                aux_consumption,
+                net_output
+            ],
+            'Efficiency (%)': [
+                100.0,
+                gross_efficiency * 100,
+                gross_efficiency * 100,
+                gross_efficiency * 100,
+                (1 - aux_power_pct/100) * 100,
+                net_efficiency * 100
+            ],
+            'Losses (MW)': [
+                0,
+                fuel_input * (1 - gross_efficiency),
+                0,
+                0,
+                aux_consumption,
+                0
+            ]
+        })
+        
+        col_loss1, col_loss2 = st.columns([2, 1])
+        
+        with col_loss1:
+            fig_losses = go.Figure()
+            
+            # Sankey-style data
+            stages = losses_data['Stage'].tolist()
+            power_values = losses_data['Power (MW)'].tolist()
+            
+            fig_losses.add_trace(go.Bar(
+                x=stages,
+                y=power_values,
+                text=[f"{p:.1f} MW" for p in power_values],
+                textposition='outside',
+                marker_color=['#2ca02c', '#ff7f0e', '#1f77b4', '#1f77b4', '#d62728', '#2ca02c']
+            ))
+            
+            fig_losses.update_layout(
+                title="Power Flow from Fuel to DC Load",
+                xaxis_title="Stage",
+                yaxis_title="Power (MW)",
+                height=400,
+                showlegend=False
+            )
+            
+            st.plotly_chart(fig_losses, use_container_width=True)
+        
+        with col_loss2:
+            st.dataframe(losses_data, use_container_width=True, hide_index=True)
+            
+            st.markdown("**Summary:**")
+            total_losses = fuel_input - net_output
+            st.write(f"• Fuel Input: {fuel_input:.1f} MW")
+            st.write(f"• Total Losses: {total_losses:.1f} MW ({(total_losses/fuel_input)*100:.1f}%)")
+            st.write(f"• Net Output: {net_output:.1f} MW")
+            st.write(f"• Net Efficiency: {net_efficiency*100:.2f}%")
+    
+    st.markdown("---")
     
     # Transient Stability
     st.markdown("### 🎯 Transient Stability Analysis")
