@@ -213,30 +213,34 @@ def calculate_bess_requirements(p_net_req_avg, p_net_req_peak, step_load_req,
 
 def calculate_availability_weibull(n_total, n_running, mtbf_hours, project_years):
     """
-    Reliability model with aging factor using CORRECT exponential distribution
+    Reliability model with aging factor using CORRECT availability formula
     
-    MTBF → Exponential reliability: R(t) = exp(-t/MTBF)
-    NOT: R(t) = 1 - (t/MTBF)  ← This was the bug
+    Availability = MTBF / (MTBF + MTTR)
+    Where:
+    - MTBF = Mean Time Between Failures (hours)
+    - MTTR = Mean Time To Repair (typically 24-72 hours for generators)
     """
     availability_over_time = []
     
+    # Typical MTTR for power generation equipment
+    mttr_hours = 48  # 48 hours average repair time
+    
     for year in range(1, project_years + 1):
         # Aging factor: reliability degrades over time
-        # Simple linear degradation: 0.5% per year
+        # 0.5% degradation per year
         aging_factor = 1.0 - (year * 0.005)
-        aging_factor = max(0.85, aging_factor)  # Floor at 85%
+        aging_factor = max(0.85, aging_factor)  # Floor at 85% after 30 years
         
-        # CORRECT: Exponential reliability from MTBF
-        failure_rate = 1.0 / mtbf_hours  # λ (lambda)
-        hours_per_year = 8760
-        unit_reliability_base = math.exp(-failure_rate * hours_per_year)
-        unit_reliability = unit_reliability_base * aging_factor
+        # Base unit availability using industry standard formula
+        unit_availability_base = mtbf_hours / (mtbf_hours + mttr_hours)
+        unit_availability = unit_availability_base * aging_factor
         
         # System availability (N+X configuration using binomial)
+        # P(system works) = P(at least n_running units are available)
         sys_avail = 0
         for k in range(n_running, n_total + 1):
             comb = math.comb(n_total, k)
-            prob = comb * (unit_reliability ** k) * ((1 - unit_reliability) ** (n_total - k))
+            prob = comb * (unit_availability ** k) * ((1 - unit_availability) ** (n_total - k))
             sys_avail += prob
         
         availability_over_time.append(sys_avail)
@@ -508,7 +512,26 @@ with st.sidebar:
     volt_mode = st.radio("Connection Voltage", ["Auto-Recommend", "Manual"], horizontal=True)
     manual_voltage_kv = 0.0
     if volt_mode == "Manual":
-        manual_voltage_kv = st.number_input("Voltage (kV)", 0.4, 230.0, 13.8, step=0.1)
+        voltage_option = st.selectbox("Select Voltage Level", [
+            "4.16 kV (Low Voltage - Small DCs)",
+            "13.8 kV (Medium Voltage - Standard)",
+            "34.5 kV (High MV - Large Off-Grid DCs)",
+            "69 kV (Sub-Transmission - Very Large)",
+            "Custom"
+        ])
+        
+        voltage_map = {
+            "4.16 kV (Low Voltage - Small DCs)": 4.16,
+            "13.8 kV (Medium Voltage - Standard)": 13.8,
+            "34.5 kV (High MV - Large Off-Grid DCs)": 34.5,
+            "69 kV (Sub-Transmission - Very Large)": 69.0,
+        }
+        
+        if voltage_option == "Custom":
+            manual_voltage_kv = st.number_input("Custom Voltage (kV)", 0.4, 230.0, 13.8, step=0.1)
+        else:
+            manual_voltage_kv = voltage_map[voltage_option]
+            st.caption(f"✅ Selected: {manual_voltage_kv} kV")
     
     st.markdown("🌍 **Site Environment**")
     derate_mode = st.radio("Derate Mode", ["Auto-Calculate", "Manual"], horizontal=True)
@@ -868,16 +891,20 @@ if use_bess:
         enable_black_start
     )
 
-# Voltage recommendation
+# Voltage recommendation (adjusted for off-grid data centers)
 if volt_mode == "Auto-Recommend":
+    # For off-grid data centers, use medium voltage distribution
+    # High voltage (138+ kV) is only for grid interconnection
     if installed_cap < 10:
-        rec_voltage_kv = 4.16
+        rec_voltage_kv = 4.16  # Low voltage distribution
     elif installed_cap < 50:
-        rec_voltage_kv = 13.8
-    elif installed_cap < 150:
-        rec_voltage_kv = 34.5
+        rec_voltage_kv = 13.8  # Standard medium voltage
+    elif installed_cap < 200:
+        rec_voltage_kv = 34.5  # High medium voltage (max for off-grid)
     else:
-        rec_voltage_kv = 138.0
+        # For very large installations (>200 MW), may need dual voltage
+        rec_voltage_kv = 34.5  # Still medium voltage for DC delivery
+        # Note: Could also use 69 kV for transmission between gen and DC
 else:
     rec_voltage_kv = manual_voltage_kv
 
@@ -1218,7 +1245,7 @@ with t1:
         c4.metric("Availability", f"{prob_gen*100:.3f}%", delta="⚠️ Below Target", delta_color="inverse")
     
     c5.metric("PUE", f"{pue_actual:.2f}")
-    c6.metric("Density", f"{gen_data['power_density_mw_per_m2']:.3f} MW/m²")
+    c6.metric("Density", f"{gen_data['power_density_mw_per_m2']*1000:.0f} kW/m²")
     
     # Load Profile Visualization
     st.markdown("### 📈 Annual Load Profile & Duration Curve")
