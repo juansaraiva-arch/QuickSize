@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 from io import BytesIO
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="CAT QuickSize v3.0", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="CAT QuickSize v3.1", page_icon="⚡", layout="wide")
 
 # ==============================================================================
 # 0. HYBRID DATA LIBRARY - ENHANCED WITH DENSITY & RAMP RATE
@@ -21,17 +21,15 @@ leps_gas_library = {
         "electrical_efficiency": 0.392,
         "heat_rate_lhv": 8780,
         "step_load_pct": 25.0, 
-        "ramp_rate_mw_s": 0.5,  # NEW
+        "ramp_rate_mw_s": 0.5,
         "emissions_nox": 0.5,
         "emissions_co": 2.5,
-        "mtbf_hours": 50000,  # NEW: Mean Time Between Failures
-        "maintenance_interval_hrs": 1000,  # Time between planned maintenance
-        "maintenance_duration_hrs": 48,    # Downtime per maintenance event
-        "default_for": 2.0, 
-        "default_maint": 5.0,
+        "mtbf_hours": 50000,
+        "maintenance_interval_hrs": 1000,
+        "maintenance_duration_hrs": 48,
         "est_cost_kw": 775.0,      
         "est_install_kw": 300.0,
-        "power_density_mw_per_m2": 0.010,  # NEW: 200 m²/MW
+        "power_density_mw_per_m2": 0.010,
         "gas_pressure_min_psi": 1.5,
         "reactance_xd_2": 0.14
     },
@@ -48,8 +46,6 @@ leps_gas_library = {
         "mtbf_hours": 48000,
         "maintenance_interval_hrs": 1000,
         "maintenance_duration_hrs": 48,
-        "default_for": 2.0,
-        "default_maint": 5.0,
         "est_cost_kw": 575.0,
         "est_install_kw": 650.0,
         "power_density_mw_per_m2": 0.010,
@@ -69,8 +65,6 @@ leps_gas_library = {
         "mtbf_hours": 52000,
         "maintenance_interval_hrs": 1000,
         "maintenance_duration_hrs": 48,
-        "default_for": 2.5,
-        "default_maint": 6.0,
         "est_cost_kw": 575.0,
         "est_install_kw": 650.0,
         "power_density_mw_per_m2": 0.010,
@@ -90,8 +84,6 @@ leps_gas_library = {
         "mtbf_hours": 55000,
         "maintenance_interval_hrs": 1000,
         "maintenance_duration_hrs": 48,
-        "default_for": 3.0,
-        "default_maint": 5.0,
         "est_cost_kw": 675.0,
         "est_install_kw": 1100.0,
         "power_density_mw_per_m2": 0.009,
@@ -105,17 +97,15 @@ leps_gas_library = {
         "electrical_efficiency": 0.354,
         "heat_rate_lhv": 9630,
         "step_load_pct": 15.0,
-        "ramp_rate_mw_s": 2.0,  # Turbines ramp faster
+        "ramp_rate_mw_s": 2.0, 
         "emissions_nox": 0.6,
         "emissions_co": 0.6,
-        "mtbf_hours": 80000,  # Turbines more reliable
-        "maintenance_interval_hrs": 8000,  # Less frequent maintenance
-        "maintenance_duration_hrs": 120,   # Longer downtime per event
-        "default_for": 1.5,
-        "default_maint": 2.0,
+        "mtbf_hours": 80000,
+        "maintenance_interval_hrs": 8000,
+        "maintenance_duration_hrs": 120,
         "est_cost_kw": 775.0,
         "est_install_kw": 1000.0,
-        "power_density_mw_per_m2": 0.020,  # NEW: 50% less footprint
+        "power_density_mw_per_m2": 0.020,
         "gas_pressure_min_psi": 300.0,
         "reactance_xd_2": 0.18
     },
@@ -126,24 +116,22 @@ leps_gas_library = {
         "electrical_efficiency": 0.475,
         "heat_rate_lhv": 7480,
         "step_load_pct": 10.0,
-        "ramp_rate_mw_s": 0.3,  # Slower ramp
+        "ramp_rate_mw_s": 0.3,
         "emissions_nox": 0.5,
         "emissions_co": 0.5,
         "mtbf_hours": 60000,
-        "maintenance_interval_hrs": 2500,  # Medium speed: less frequent
-        "maintenance_duration_hrs": 72,    # Longer downtime
-        "default_for": 3.0, 
-        "default_maint": 5.0,
+        "maintenance_interval_hrs": 2500,
+        "maintenance_duration_hrs": 72,
         "est_cost_kw": 700.0,
         "est_install_kw": 1250.0,
-        "power_density_mw_per_m2": 0.008,  # Larger footprint
+        "power_density_mw_per_m2": 0.008,
         "gas_pressure_min_psi": 90.0,
         "reactance_xd_2": 0.16
     }
 }
 
 # ==============================================================================
-# HELPER FUNCTIONS - ENHANCED
+# HELPER FUNCTIONS
 # ==============================================================================
 
 def get_part_load_efficiency(base_eff, load_pct, gen_type):
@@ -234,6 +222,7 @@ def calculate_availability_weibull(n_total, n_running, mtbf_hours, project_years
         aging_factor = 1.0 - (year * 0.001)
         aging_factor = max(0.95, aging_factor)
         aged_unit_availability = unit_availability * aging_factor
+        
         sys_avail_year = 0
         for k in range(n_running, n_total + 1):
             comb = math.comb(n_total, k)
@@ -281,11 +270,11 @@ else:
     u_energy, u_therm, u_water = "MWh", "GJ", "m³/day"
     u_press = "Bar"
 
-st.title(f"⚡ CAT QuickSize v3.0 ({freq_hz}Hz)")
+st.title(f"⚡ CAT QuickSize v3.1 ({freq_hz}Hz)")
 st.markdown("**Next-Gen Data Center Power Solutions.**\nOperational Deterministic Modeling: Comparing 'Gas Only' vs 'Hybrid' architecture.")
 
 # ==============================================================================
-# 2. INPUTS - ENHANCED WITH PUE
+# 2. INPUTS
 # ==============================================================================
 
 with st.sidebar:
@@ -300,13 +289,7 @@ with st.sidebar:
         "Edge Computing"
     ])
     
-    pue_defaults = {
-        "AI Factory (Training)": 1.15,
-        "AI Factory (Inference)": 1.20,
-        "Hyperscale Standard": 1.25,
-        "Colocation": 1.50,
-        "Edge Computing": 1.60
-    }
+    pue_defaults = {"AI Factory (Training)": 1.15, "AI Factory (Inference)": 1.20, "Hyperscale Standard": 1.25, "Colocation": 1.50, "Edge Computing": 1.60}
     
     is_ai = "AI" in dc_type
     def_step_load = 40.0 if is_ai else 15.0
@@ -331,6 +314,7 @@ with st.sidebar:
         "Edge Computing": {"capacity_factor": 0.50, "peak_avg_ratio": 1.50}
     }
     profile = load_profiles[dc_type]
+    
     col_cf1, col_cf2 = st.columns(2)
     capacity_factor = col_cf1.slider("Capacity Factor (%)", 30.0, 100.0, profile["capacity_factor"]*100, 1.0) / 100.0
     peak_avg_ratio = col_cf2.slider("Peak/Avg Ratio", 1.0, 2.0, profile["peak_avg_ratio"], 0.05)
@@ -358,11 +342,13 @@ with st.sidebar:
 
     st.markdown("🌍 **Site Environment**")
     derate_mode = st.radio("Derate Mode", ["Auto-Calculate", "Manual"], horizontal=True)
+    
     if derate_mode == "Auto-Calculate":
         c_env1, c_env2 = st.columns(2)
         site_temp_c = c_env1.number_input(f"Ambient Temp ({u_temp})", 0, 55, 25)
         site_alt_m = c_env2.number_input(f"Altitude ({u_dist})", 0, 4500, 0, step=50)
         methane_number = st.slider("Gas Methane Number", 50, 100, 80)
+        
         temp_derate = 1.0 - max(0, (site_temp_c - 25) * 0.01)
         alt_derate = 1.0 - (site_alt_m / 300)
         fuel_derate = 1.0 if methane_number >= 70 else 0.95
@@ -374,6 +360,11 @@ with st.sidebar:
 
     st.header("2. Technology Solution")
     gen_filter = st.multiselect("Technology Filter", ["High Speed", "Medium Speed", "Gas Turbine"], default=["High Speed", "Medium Speed"])
+    
+    # --- FIXED: Added missing variable use_bess ---
+    use_bess = st.checkbox("Include BESS (Battery Energy Storage)", value=def_use_bess)
+    # ----------------------------------------------
+    
     enable_black_start = st.checkbox("Enable Black Start Capability", value=False)
     include_chp = st.checkbox("Include Tri-Generation (CHP)", value=False)
     cooling_method = "Absorption Chiller" if include_chp else st.selectbox("Cooling Method", ["Air-Cooled", "Water-Cooled"])
@@ -382,6 +373,7 @@ with st.sidebar:
     fuel_mode = st.radio("Primary Fuel", ["Pipeline Gas", "LNG", "Dual-Fuel"], horizontal=True)
     is_lng_primary = "LNG" in fuel_mode
     has_lng_storage = fuel_mode in ["LNG", "Dual-Fuel"]
+    
     if has_lng_storage:
         lng_days = st.number_input("LNG Storage (Days)", 1, 90, 7)
     else:
@@ -393,6 +385,7 @@ with st.sidebar:
     col_g1, col_g2 = st.columns(2)
     gas_price_wellhead = col_g1.number_input("Gas Price ($/MMBtu)", 0.5, 30.0, 4.0, step=0.5)
     gas_transport = col_g2.number_input("Transport ($/MMBtu)", 0.0, 5.0, 0.5, step=0.1)
+    
     total_gas_price = gas_price_wellhead + gas_transport
     benchmark_price = st.number_input("Benchmark Electricity ($/kWh)", 0.01, 0.50, 0.12, step=0.01)
     
