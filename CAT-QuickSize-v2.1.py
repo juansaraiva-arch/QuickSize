@@ -819,8 +819,8 @@ if use_bess and bess_reliability_enabled:
     best_config_c = None
 
     for n_run in range(n_running_start, n_running_end):
-        # Chequeo de capacidad mínima ajustada
-        if n_run * unit_site_cap < p_net_req_avg * 1.02:
+        # Chequeo de capacidad mínima ajustada - CORRECTED VARIABLE NAME HERE
+        if n_run * unit_site_cap < p_total_avg * 1.02:
             continue
 
         for n_res_base in range(0, 15):
@@ -1239,7 +1239,7 @@ with t5:
     c_f5.metric("Payback", payback_str)
 
 # ==============================================================================
-# 9. EXCEL & PDF EXPORT (RESTORED)
+# 9. EXCEL & PDF EXPORT
 # ==============================================================================
 
 st.markdown("---")
