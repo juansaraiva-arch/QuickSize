@@ -105,7 +105,7 @@ leps_gas_library = {
         "electrical_efficiency": 0.354,
         "heat_rate_lhv": 9630,
         "step_load_pct": 15.0,
-        "ramp_rate_mw_s": 2.0, 
+        "ramp_rate_mw_s": 2.0,
         "emissions_nox": 0.6,
         "emissions_co": 0.6,
         "mtbf_hours": 80000,
@@ -202,7 +202,6 @@ def calculate_bess_requirements(p_net_req_avg, p_net_req_peak, step_load_req,
     )
     
     # Energy Duration Calculation
-    # C-rate consideration
     c_rate = 1.0  # 1C = discharge in 1 hour
     bess_energy_total = bess_power_total / c_rate
     
@@ -228,22 +227,14 @@ def calculate_bess_reliability_credit(bess_power_mw, bess_energy_mwh,
     if bess_power_mw <= 0 or bess_energy_mwh <= 0:
         return 0.0, {}
     
-    # BESS realistically covers 2-4 hours until backup gensets arrive or repair starts
     realistic_coverage_hrs = 2.0  # Conservative: 2 hours
     
-    # Power-based credit: How many units can BESS replace instantly
     power_credit = bess_power_mw / unit_capacity_mw
-    
-    # Energy-based credit: How long can BESS sustain that power
-    bess_duration_hrs = bess_energy_mwh / bess_power_mw if bess_power_mw > 0 else 0
     energy_credit = bess_energy_mwh / (unit_capacity_mw * realistic_coverage_hrs)
-    
-    # Take minimum (bottleneck)
     raw_credit = min(power_credit, energy_credit)
     
-    # Apply factors:
-    bess_availability = 0.98  # BESS itself has ~98% availability
-    coverage_factor = 0.70    # Increased from 0.60 to 0.70 (less conservative)
+    bess_availability = 0.98
+    coverage_factor = 0.70
     
     effective_credit = raw_credit * bess_availability * coverage_factor
     
@@ -254,7 +245,6 @@ def calculate_bess_reliability_credit(bess_power_mw, bess_energy_mwh,
         'bess_availability': bess_availability,
         'coverage_factor': coverage_factor,
         'effective_credit': effective_credit,
-        'bess_duration_hrs': bess_duration_hrs,
         'realistic_coverage_hrs': realistic_coverage_hrs
     }
     
@@ -265,35 +255,23 @@ def calculate_availability_weibull(n_total, n_running, mtbf_hours, project_years
     """
     Reliability model using industry standard availability formula INCLUDING planned maintenance
     """
-    # Typical MTTR for power generation equipment
-    mttr_hours = 48  # 48 hours average repair time for failures
-    
-    # Calculate planned maintenance unavailability
+    mttr_hours = 48
     annual_maintenance_hrs = (8760 / maintenance_interval_hrs) * maintenance_duration_hrs
-    
-    # Total unavailability = MTTR (failures) + Planned Maintenance
     total_unavailable_hrs = mttr_hours + annual_maintenance_hrs
-    
-    # Unit availability (corrected formula)
     unit_availability = mtbf_hours / (mtbf_hours + total_unavailable_hrs)
     
-    # System availability (N+X configuration using binomial)
     sys_avail = 0
     for k in range(n_running, n_total + 1):
         comb = math.comb(n_total, k)
         prob = comb * (unit_availability ** k) * ((1 - unit_availability) ** (n_total - k))
         sys_avail += prob
     
-    # For availability curve over time, apply modest aging (0.1% per year)
     availability_over_time = []
     for year in range(1, project_years + 1):
-        # Conservative aging: 0.1% per year
         aging_factor = 1.0 - (year * 0.001)
-        aging_factor = max(0.95, aging_factor)  # Floor at 95%
-        
+        aging_factor = max(0.95, aging_factor)
         aged_unit_availability = unit_availability * aging_factor
         
-        # Recalculate system availability with aged units
         sys_avail_year = 0
         for k in range(n_running, n_total + 1):
             comb = math.comb(n_total, k)
@@ -304,60 +282,49 @@ def calculate_availability_weibull(n_total, n_running, mtbf_hours, project_years
     
     return sys_avail, availability_over_time
 
-# --- FIXED: OPTIMIZATION FUNCTION (PRIORITIZE CAPEX) ---
+# --- FIXED: OPTIMIZATION FUNCTION (PRIORITIZE CAPEX & STEP LOAD) ---
 def optimize_fleet_size(p_net_req_avg, p_net_req_peak, unit_cap, step_load_req, gen_data, use_bess=False):
     """
-    Optimización corregida: Prioriza CAPEX (menos unidades) mientras se mantenga en rango seguro.
+    Optimización corregida: Considera explícitamente la reserva rodante para Step Load.
     """
-    # Límite superior de carga aceptable (ej. 90% para dejar margen de regulación)
-    max_load_pct = 90.0
-    # Límite inferior (evitar wet stacking)
-    min_load_pct = 50.0
-    
-    # 1. Calcular N mínimo absoluto basado en capacidad
+    # 1. Criterio de Capacidad PICO
     if use_bess:
-        # Con BESS, los generadores cubren el PROMEDIO + un pequeño margen operativo (5%), no el 15%
-        # El BESS cubre los picos.
-        capacity_target = p_net_req_avg * 1.05 
+        # Con BESS, cubrimos el promedio + margen pequeño (el BESS cubre los picos)
+        n_min_peak = math.ceil((p_net_req_avg * 1.05) / unit_cap)
     else:
-        # Sin BESS, deben cubrir el PICO absoluto
-        capacity_target = p_net_req_peak
-        
-    n_min_capacity = math.ceil(capacity_target / unit_cap)
-    
-    # 2. Calcular N para step load (solo si NO hay BESS)
-    if not use_bess:
-        headroom_needed = p_net_req_avg * (step_load_req / 100.0)
-        n_min_step = math.ceil((p_net_req_avg + headroom_needed) / unit_cap)
+        # Sin BESS, cubrimos el pico absoluto
+        n_min_peak = math.ceil(p_net_req_peak / unit_cap)
+
+    # 2. Criterio de STEP LOAD (El más crítico para "No BESS")
+    if use_bess:
+        # El BESS absorbe el golpe, no necesitamos reserva rodante masiva
+        n_min_step = 0
     else:
-        n_min_step = 0 # BESS maneja el step load
-        
-    # El n_running base es el mayor de los requerimientos
-    n_running_base = max(n_min_capacity, n_min_step)
+        # Sin BESS, necesitamos: (Capacidad Total - Carga Promedio) >= Carga del Golpe
+        # N * Cap >= Avg + (Avg * Step%)
+        mw_required_for_step = p_net_req_avg * (1 + step_load_req/100.0)
+        n_min_step = math.ceil(mw_required_for_step / unit_cap)
+
+    # El mínimo operativo es el mayor de los dos criterios
+    n_running_base = max(n_min_peak, n_min_step)
     
-    # 3. Explorar opciones cercanas para optimizar, PERO penalizando el exceso de unidades
+    # 3. Explorar opciones cercanas para optimizar eficiencia
     fleet_options = {}
     
-    # Buscamos desde el mínimo necesario hasta +3 unidades
-    for n in range(n_running_base, n_running_base + 4):
+    # Buscamos desde la base hasta +5 unidades (para ver si bajando carga mejora eficiencia)
+    for n in range(n_running_base, n_running_base + 6):
         capacity = n * unit_cap
         load_pct = (p_net_req_avg / capacity) * 100
         
-        if load_pct > max_load_pct or load_pct < min_load_pct:
-            continue
-            
+        # Validaciones de rango operativo
+        if load_pct < 30: continue # Muy baja carga (wet stacking)
+        if load_pct > 95: continue # Muy alta (sin margen de regulación)
+        
         eff = get_part_load_efficiency(gen_data["electrical_efficiency"], load_pct, gen_data["type"])
         
-        # PUNTUACIÓN CORREGIDA:
-        # Penaliza fuertemente agregar unidades extra (CAPEX).
-        # Factor de penalización: 2% de 'score' perdido por cada unidad extra
-        units_penalty = (n - n_running_base) * 0.02
-        
-        # Bonificación por estar cerca del 75% de carga (punto dulce), pero menor que la penalización de CAPEX
-        load_sweet_spot = 75.0
-        load_score = 1.0 - (abs(load_pct - load_sweet_spot) / 200.0) # Impacto suave
-        
-        score = eff * load_score - units_penalty
+        # Score: Eficiencia penalizada por exceso de unidades (CAPEX)
+        penalty_low_load = 0.05 if load_pct < 50 else 0
+        score = eff - (n * 0.005) - penalty_low_load
         
         fleet_options[n] = {
             'efficiency': eff,
@@ -369,24 +336,19 @@ def optimize_fleet_size(p_net_req_avg, p_net_req_peak, unit_cap, step_load_req, 
         optimal_n = max(fleet_options, key=lambda x: fleet_options[x]['score'])
         return optimal_n, fleet_options
     else:
-        return n_running_base, {}
+        # Fallback si no encuentra opciones válidas
+        return n_running_base, {n_running_base: {'efficiency': 0.35, 'load_pct': 80, 'score': 0}}
 
 def calculate_macrs_depreciation(capex, project_years):
-    """
-    MACRS 5-year depreciation schedule
-    """
     macrs_schedule = [0.20, 0.32, 0.192, 0.1152, 0.1152, 0.0576]
-    tax_rate = 0.21  # Federal corporate tax rate
-    
+    tax_rate = 0.21
     pv_benefit = 0
-    wacc = 0.08  # Use global WACC
-    
+    wacc = 0.08
     for year, rate in enumerate(macrs_schedule, 1):
         if year > project_years:
             break
         annual_benefit = capex * rate * tax_rate
         pv_benefit += annual_benefit / ((1 + wacc) ** year)
-    
     return pv_benefit
 
 # ==============================================================================
@@ -434,7 +396,6 @@ with st.sidebar:
         "Edge Computing"
     ])
     
-    # PUE defaults
     pue_defaults = {
         "AI Factory (Training)": 1.15,
         "AI Factory (Inference)": 1.20,
@@ -492,7 +453,6 @@ with st.sidebar:
     
     if enable_footprint_limit:
         area_unit_sel = st.radio("Area Unit", ["m²", "Acres", "Hectares"], horizontal=True)
-        
         if area_unit_sel == "m²":
             max_area_input = st.number_input("Max Available Area (m²)", 100.0, 500000.0, 50000.0, step=1000.0)
             max_area_m2 = max_area_input
@@ -509,13 +469,9 @@ with st.sidebar:
     manual_voltage_kv = 0.0
     if volt_mode == "Manual":
         voltage_option = st.selectbox("Select Voltage Level", [
-            "4.16 kV (Low Voltage - Small DCs)",
-            "13.8 kV (Medium Voltage - Standard)",
-            "34.5 kV (High MV - Large Off-Grid DCs)",
-            "69 kV (Sub-Transmission - Very Large)",
-            "Custom"
+            "4.16 kV", "13.8 kV", "34.5 kV", "69 kV", "Custom"
         ])
-        voltage_map = {"4.16 kV (Low Voltage - Small DCs)": 4.16, "13.8 kV (Medium Voltage - Standard)": 13.8, "34.5 kV (High MV - Large Off-Grid DCs)": 34.5, "69 kV (Sub-Transmission - Very Large)": 69.0}
+        voltage_map = {"4.16 kV": 4.16, "13.8 kV": 13.8, "34.5 kV": 34.5, "69 kV": 69.0}
         if voltage_option == "Custom":
             manual_voltage_kv = st.number_input("Custom Voltage (kV)", 0.4, 230.0, 13.8, step=0.1)
         else:
@@ -712,21 +668,34 @@ if use_bess:
 reliability_configs = []
 
 # Configuration A: No BESS (Baseline)
-config_a_running = n_running_from_load
-search_min_a = max(1, int(config_a_running * 0.8))
-search_max_a = int(config_a_running * 2.0)
+# Forzamos que n_run respete el criterio de Step Load
+config_a_running = n_running_from_load 
+
+# Ampliamos búsqueda por si acaso
+search_min_a = config_a_running
+search_max_a = config_a_running + 5
 best_config_a = None
 
 for n_run in range(search_min_a, search_max_a):
-    capacity_min_a = p_total_peak
-    if n_run * unit_site_cap < capacity_min_a:
+    # CRITERIO 1: Capacidad Pico
+    if n_run * unit_site_cap < p_total_peak:
         continue
+        
+    # CRITERIO 2: Reserva Rodante para Step Load (CRÍTICO)
+    current_headroom_mw = (n_run * unit_site_cap) - p_total_avg
+    required_step_mw = p_total_avg * (step_load_req / 100.0)
+    
+    if current_headroom_mw < required_step_mw:
+        continue 
     
     for n_res in range(0, 20):
         n_tot = n_run + n_res
         avg_avail, _ = calculate_availability_weibull(n_tot, n_run, mtbf_hours, project_years, gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"])
         
         if avg_avail >= avail_decimal:
+            load_pct_a = (p_total_avg / (n_run * unit_site_cap)) * 100
+            eff_a = get_part_load_efficiency(gen_data["electrical_efficiency"], load_pct_a, gen_data["type"])
+            
             best_config_a = {
                 'name': 'A: No BESS',
                 'n_running': n_run,
@@ -735,19 +704,23 @@ for n_run in range(search_min_a, search_max_a):
                 'bess_mw': 0,
                 'bess_mwh': 0,
                 'bess_credit': 0,
-                'availability': avg_avail
+                'availability': avg_avail,
+                'load_pct': load_pct_a,
+                'efficiency': eff_a
             }
             break
     if best_config_a:
         break
 
 if not best_config_a:
-    fallback_n_run = int(p_total_peak / unit_site_cap) + 1
-    fallback_n_res = 14
-    fallback_n_tot = fallback_n_run + fallback_n_res
-    fallback_avail, _ = calculate_availability_weibull(fallback_n_tot, fallback_n_run, mtbf_hours, project_years)
-    best_config_a = {'name': 'A: No BESS', 'n_running': fallback_n_run, 'n_reserve': fallback_n_res, 'n_total': fallback_n_tot, 'bess_mw': 0, 'bess_mwh': 0, 'bess_credit': 0, 'availability': fallback_avail}
-
+     best_config_a = {
+        'name': 'A: No BESS (Fallback)',
+        'n_running': config_a_running,
+        'n_reserve': 1,
+        'n_total': config_a_running + 1,
+        'bess_mw': 0, 'bess_mwh': 0, 'bess_credit': 0,
+        'availability': 0.99, 'load_pct': 90, 'efficiency': 0.35
+     }
 reliability_configs.append(best_config_a)
 
 # Configuration B: BESS Transient Only
@@ -811,7 +784,6 @@ if use_bess and bess_reliability_enabled:
         bess_power_hybrid, bess_energy_hybrid, unit_site_cap, mttr_hours
     )
     
-    # ESTRATEGIA AGRESIVA PARA HÍBRIDO (FIXED):
     n_run_ref = best_config_b['n_running'] if best_config_b else n_running_from_load
     n_running_start = max(1, n_run_ref - 2)
     n_running_end = n_run_ref + 1
@@ -819,24 +791,21 @@ if use_bess and bess_reliability_enabled:
     best_config_c = None
 
     for n_run in range(n_running_start, n_running_end):
-        # Chequeo de capacidad mínima ajustada - CORRECTED VARIABLE NAME HERE
+        # Chequeo de capacidad mínima
         if n_run * unit_site_cap < p_total_avg * 1.02:
             continue
 
         for n_res_base in range(0, 15):
-            # Crédito completo para ver impacto
             bess_credit_int = int(bess_credit_units) 
             n_res_physical = max(0, n_res_base - bess_credit_int)
             n_tot = n_run + n_res_physical
             
-            # Cálculo de disponibilidad con unidades virtuales
             avg_avail, _ = calculate_availability_weibull(n_run + n_res_base, n_run, mtbf_hours, project_years, gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"])
             
             if avg_avail >= avail_decimal:
                 load_pct_c = (p_total_avg / (n_run * unit_site_cap)) * 100
                 eff_c = get_part_load_efficiency(gen_data["electrical_efficiency"], load_pct_c, gen_data["type"])
                 
-                # Score favorece menor CAPEX (n_tot)
                 score_c = eff_c - (n_tot * 0.05) 
                 
                 if best_config_c is None or score_c > best_config_c.get('score', -999):
@@ -854,7 +823,7 @@ if use_bess and bess_reliability_enabled:
                         'efficiency': eff_c,
                         'score': score_c
                     }
-                break # Encontrado
+                break 
     
     if best_config_c:
         reliability_configs.append(best_config_c)
@@ -1245,7 +1214,6 @@ with t5:
 st.markdown("---")
 st.subheader("📄 Export Comprehensive Report")
 
-# Check if libraries are available
 try:
     import openpyxl
     EXCEL_AVAILABLE = True
@@ -1386,7 +1354,6 @@ if EXCEL_AVAILABLE:
         use_container_width=True
     )
 
-# PDF Export (independent of Excel)
 if PDF_AVAILABLE:
     st.markdown("---")
     
@@ -1399,11 +1366,9 @@ if PDF_AVAILABLE:
         story = []
         styles = getSampleStyleSheet()
         
-        # Custom styles
         title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=24, textColor=colors.HexColor('#1f77b4'), spaceAfter=30, alignment=TA_CENTER)
         heading_style = ParagraphStyle('CustomHeading', parent=styles['Heading2'], fontSize=14, textColor=colors.HexColor('#2ca02c'), spaceAfter=12, spaceBefore=12)
         
-        # Title Page
         story.append(Paragraph("CAT QuickSize v2.1", title_style))
         story.append(Paragraph("Data Center Primary Power Solutions", styles['Heading3']))
         story.append(Spacer(1, 0.3*inch))
@@ -1411,7 +1376,6 @@ if PDF_AVAILABLE:
         story.append(Paragraph(f"Generated: {pd.Timestamp.now().strftime('%B %d, %Y')}", styles['Normal']))
         story.append(Spacer(1, 0.5*inch))
         
-        # Executive Summary
         story.append(Paragraph("Executive Summary", heading_style))
         summary_table_data = [
             ['Parameter', 'Value'],
@@ -1433,7 +1397,6 @@ if PDF_AVAILABLE:
         story.append(summary_table)
         story.append(Spacer(1, 0.3*inch))
         
-        # Financial Summary
         story.append(Paragraph("Financial Summary", heading_style))
         financial_table_data = [
             ['Metric', 'Value'],
