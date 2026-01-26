@@ -1400,9 +1400,19 @@ with t2:
         
         # Show BESS strategy
         peak_vs_avg = p_total_peak - p_total_avg
-        if peak_vs_avg > 0:
+        
+        # Calculate units saved (if n_running_from_load is available)
+        if 'n_running_from_load' in locals() or 'n_running_from_load' in globals():
+            units_saved = n_running_from_load - n_running  # Positive if we saved units
+        else:
+            units_saved = 0
+        
+        if peak_vs_avg > 0 and units_saved > 0:
             st.success(f"✅ **BESS Peak Shaving:** Gensets sized for {p_total_avg:.1f} MW average. "
-                      f"BESS covers {peak_vs_avg:.1f} MW peak difference → **{optimization_iterations} fewer gensets needed**")
+                      f"BESS covers {peak_vs_avg:.1f} MW peak difference → **{units_saved} fewer gensets needed**")
+        elif peak_vs_avg > 0:
+            st.success(f"✅ **BESS Peak Shaving:** Gensets sized for {p_total_avg:.1f} MW average. "
+                      f"BESS covers {peak_vs_avg:.1f} MW peak difference")
         
         # BESS Breakdown
         bess_breakdown_data = pd.DataFrame({
