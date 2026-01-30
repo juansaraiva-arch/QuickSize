@@ -1192,6 +1192,16 @@ if use_bess and bess_reliability_enabled:
     best_config_c = None
     found_c = False
     
+    # Strategy: Start with Config B's reserve requirement, then apply BESS credit
+    # First, find what reserve Config B needed
+    if best_config_b and 'n_reserve' in best_config_b:
+        config_b_reserve = best_config_b['n_reserve']
+    else:
+        # Fallback: estimate from Config A or use default
+        config_b_reserve = best_config_a['n_reserve'] if best_config_a and 'n_reserve' in best_config_a else 8
+    
+    print(f"[DEBUG] Config C: Config B used n_reserve={config_b_reserve}, will apply credit={bess_credit_int}", file=sys.stderr)
+    
     # Search for best config
     for n_run_offset in range(-5, 10):
         if found_c:
@@ -1204,10 +1214,14 @@ if use_bess and bess_reliability_enabled:
         if n_run * unit_site_cap < p_total_avg * 1.05:
             continue
         
-        for n_res_base in range(0, 20):
-            # Apply BESS credit
+        # Try with BESS credit applied: use higher base reserve, then subtract credit
+        # This ensures BESS actually reduces the needed units
+        for n_res_base in range(config_b_reserve - 2, config_b_reserve + 10):
+            # Apply BESS credit - this is the key difference from Config B
             n_res_effective = max(1, n_res_base - bess_credit_int)
             n_tot = n_run + n_res_effective
+            
+            print(f"[DEBUG] Config C: Trying n_run={n_run}, n_res_base={n_res_base}, credit={bess_credit_int}, effective={n_res_effective}, total={n_tot}", file=sys.stderr)
             
             try:
                 avg_avail, _ = calculate_availability_weibull(
@@ -1223,6 +1237,8 @@ if use_bess and bess_reliability_enabled:
                         load_pct_c,
                         gen_data["type"]
                     )
+                    
+                    print(f"[DEBUG] Config C FOUND: n_run={n_run}, n_res_effective={n_res_effective}, total={n_tot}, avail={avg_avail*100:.4f}%", file=sys.stderr)
                     
                     best_config_c = {
                         'name': f'C: {bess_strategy}',
@@ -1241,7 +1257,7 @@ if use_bess and bess_reliability_enabled:
                     found_c = True
                     break
             except Exception as e:
-                st.sidebar.error(f"Config C error: {str(e)}")
+                print(f"[DEBUG] Config C error: {str(e)}", file=sys.stderr)
                 continue
     
     if best_config_c:
