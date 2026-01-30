@@ -168,6 +168,117 @@ def transient_stability_check(xd_pu, num_units, step_load_pct):
         return False, voltage_sag
     return True, voltage_sag
 
+# ==============================================================================
+# NEW: SPINNING RESERVE CALCULATION FUNCTION
+# ==============================================================================
+
+def calculate_spinning_reserve_units(p_avg_load, unit_capacity, spinning_reserve_pct, 
+                                     use_bess=False, bess_power_mw=0, gen_step_capability_pct=0):
+    """
+    Calculate the number of running units needed considering spinning reserve requirements.
+    
+    Spinning Reserve: Extra capacity needed to handle sudden load increases or generator trips.
+    
+    WITHOUT BESS:
+    - Generators must provide ALL spinning reserve
+    - More units run at LOWER load to have headroom
+    
+    WITH BESS:
+    - BESS covers part (or all) of spinning reserve
+    - Fewer units run at HIGHER load = better efficiency
+    
+    Parameters:
+    -----------
+    p_avg_load : float
+        Average load to serve (MW)
+    unit_capacity : float
+        Capacity per generator (MW)
+    spinning_reserve_pct : float
+        Required spinning reserve as % of average load
+    use_bess : bool
+        Whether BESS is available for spinning reserve
+    bess_power_mw : float
+        BESS power capacity (MW) - can cover spinning reserve
+    gen_step_capability_pct : float
+        Generator step load capability (% of rating)
+    
+    Returns:
+    --------
+    dict with:
+        - n_units_running: Number of generators in operation
+        - load_per_unit_pct: Load on each running unit (%)
+        - spinning_reserve_mw: Total spinning reserve required (MW)
+        - spinning_from_gens: Spinning reserve from generators (MW)
+        - spinning_from_bess: Spinning reserve from BESS (MW)
+        - total_online_capacity: Total capacity online (MW)
+        - headroom_available: Available headroom for load swings (MW)
+    """
+    
+    # Step 1: Calculate spinning reserve requirement
+    spinning_reserve_mw = p_avg_load * (spinning_reserve_pct / 100)
+    
+    # Step 2: Determine how much BESS can contribute to spinning reserve
+    if use_bess and bess_power_mw > 0:
+        # BESS can cover spinning reserve up to its power rating
+        # But we limit it to the actual spinning reserve needed
+        spinning_from_bess = min(bess_power_mw, spinning_reserve_mw)
+    else:
+        spinning_from_bess = 0
+    
+    # Step 3: Remaining spinning reserve that generators must provide
+    spinning_from_gens = spinning_reserve_mw - spinning_from_bess
+    
+    # Step 4: Calculate required online capacity
+    # Online capacity = Average Load + Generator Spinning Reserve Contribution
+    required_online_capacity = p_avg_load + spinning_from_gens
+    
+    # Step 5: Calculate number of units needed
+    # We need enough units to provide the required online capacity
+    # Each unit should not exceed ~85% load to maintain headroom for response
+    max_unit_load_pct = 85.0  # Maximum practical load per unit
+    
+    # Minimum units based on capacity at max load
+    n_min_capacity = math.ceil(required_online_capacity / (unit_capacity * max_unit_load_pct / 100))
+    
+    # Alternative: Calculate based on required headroom per unit
+    # Each running generator must contribute to spinning reserve
+    if spinning_from_gens > 0:
+        # Headroom needed per unit = Total gen spinning reserve / n_units
+        # We want load_pct + headroom_pct <= 100%
+        # So: load_pct = avg_load / (n * unit_cap) and headroom = spinning_from_gens / (n * unit_cap)
+        # Constraint: avg_load / (n * unit_cap) + spinning_from_gens / (n * unit_cap) <= max_load_pct
+        # => (avg_load + spinning_from_gens) / (n * unit_cap) <= max_load_pct
+        # => n >= (avg_load + spinning_from_gens) / (unit_cap * max_load_pct)
+        n_min_headroom = math.ceil(required_online_capacity / (unit_capacity * max_unit_load_pct / 100))
+    else:
+        # With BESS covering all spinning reserve, generators just need to serve load
+        n_min_headroom = math.ceil(p_avg_load / (unit_capacity * max_unit_load_pct / 100))
+    
+    # Take the larger of the two constraints
+    n_units_running = max(n_min_capacity, n_min_headroom)
+    
+    # Ensure at least 1 unit
+    n_units_running = max(1, n_units_running)
+    
+    # Step 6: Calculate actual load per unit
+    total_online_capacity = n_units_running * unit_capacity
+    load_per_unit_pct = (p_avg_load / total_online_capacity) * 100
+    
+    # Step 7: Calculate actual headroom available
+    headroom_available = total_online_capacity - p_avg_load
+    
+    return {
+        'n_units_running': n_units_running,
+        'load_per_unit_pct': load_per_unit_pct,
+        'spinning_reserve_mw': spinning_reserve_mw,
+        'spinning_from_gens': spinning_from_gens,
+        'spinning_from_bess': spinning_from_bess,
+        'total_online_capacity': total_online_capacity,
+        'headroom_available': headroom_available,
+        'required_online_capacity': required_online_capacity
+    }
+
+
 def calculate_bess_requirements(p_net_req_avg, p_net_req_peak, step_load_req, 
                                 gen_ramp_rate, gen_step_capability, enable_black_start=False):
     """
@@ -192,6 +303,10 @@ def calculate_bess_requirements(p_net_req_avg, p_net_req_peak, step_load_req,
     # Component 5: Black Start Capability
     bess_black_start = p_net_req_peak * 0.05 if enable_black_start else 0
     
+    # Component 6: Spinning Reserve Support (NEW)
+    # BESS can cover spinning reserve, allowing generators to run at higher load
+    bess_spinning_reserve = p_net_req_avg * (step_load_req / 100)  # Same as spinning reserve req
+    
     # Total Power (take maximum of all requirements)
     bess_power_total = max(
         bess_step_support,
@@ -199,6 +314,7 @@ def calculate_bess_requirements(p_net_req_avg, p_net_req_peak, step_load_req,
         bess_ramp_support,
         bess_freq_reg,
         bess_black_start,
+        bess_spinning_reserve,  # NEW
         p_net_req_peak * 0.15  # Minimum 15% floor
     )
     
@@ -219,7 +335,8 @@ def calculate_bess_requirements(p_net_req_avg, p_net_req_peak, step_load_req,
         'peak_shaving': bess_peak_shaving,
         'ramp_support': bess_ramp_support,
         'freq_reg': bess_freq_reg,
-        'black_start': bess_black_start
+        'black_start': bess_black_start,
+        'spinning_reserve': bess_spinning_reserve  # NEW
     }
     
     return bess_power_total, bess_energy_total, breakdown
@@ -582,7 +699,8 @@ with st.sidebar:
             f"- Effective Hours/Year: **{8760*capacity_factor:.0f} hrs**")
     
     avail_req = st.number_input("Required Availability (%)", 90.0, 99.99999, 99.99, format="%.5f")
-    step_load_req = st.number_input("Step Load Req (%)", 0.0, 100.0, def_step_load)
+    step_load_req = st.number_input("Spinning Reserve Req (%)", 0.0, 100.0, def_step_load,
+                                    help="Spinning reserve = extra capacity to handle sudden load increases or generator trips")
     
     # ===== NEW: FOOTPRINT CONSTRAINTS =====
     st.markdown("📐 **Site Constraints**")
@@ -937,20 +1055,10 @@ unit_iso_cap = gen_data["iso_rating_mw"]
 unit_site_cap = unit_iso_cap * derate_factor_calc
 
 # ============================================================================
-# ENHANCED FLEET OPTIMIZATION - AVAILABILITY-DRIVEN WITH BESS CREDIT
+# CORRECTED: SPINNING RESERVE CALCULATION FOR Load/Unit (%)
 # ============================================================================
 
-# Step 1: Calculate MINIMUM n_running based on load requirements
-n_running_from_load, fleet_options = optimize_fleet_size(
-    p_total_avg, p_total_peak, unit_site_cap, step_load_req, gen_data, use_bess
-)
-
-# Step 2: Calculate N+X for availability target
-avail_decimal = avail_req / 100
-mtbf_hours = gen_data["mtbf_hours"]
-mttr_hours = 48  # Realistic: 2 days repair time
-
-# Calculate BESS requirements FIRST (needed for reliability credit)
+# First, calculate BESS requirements
 bess_power_transient = 0.0
 bess_energy_transient = 0.0
 bess_breakdown_transient = {}
@@ -962,6 +1070,40 @@ if use_bess:
         enable_black_start
     )
 
+# NOW: Calculate spinning reserve and running units CORRECTLY
+spinning_reserve_result = calculate_spinning_reserve_units(
+    p_avg_load=p_total_avg,
+    unit_capacity=unit_site_cap,
+    spinning_reserve_pct=step_load_req,
+    use_bess=use_bess,
+    bess_power_mw=bess_power_transient if use_bess else 0,
+    gen_step_capability_pct=gen_data["step_load_pct"]
+)
+
+# Extract results
+n_running_for_spinning = spinning_reserve_result['n_units_running']
+load_per_unit_spinning = spinning_reserve_result['load_per_unit_pct']
+spinning_reserve_mw = spinning_reserve_result['spinning_reserve_mw']
+spinning_from_gens = spinning_reserve_result['spinning_from_gens']
+spinning_from_bess = spinning_reserve_result['spinning_from_bess']
+
+# ============================================================================
+# ENHANCED FLEET OPTIMIZATION - AVAILABILITY-DRIVEN WITH BESS CREDIT
+# ============================================================================
+
+# Step 1: Calculate MINIMUM n_running based on load AND spinning reserve requirements
+n_running_from_load, fleet_options = optimize_fleet_size(
+    p_total_avg, p_total_peak, unit_site_cap, step_load_req, gen_data, use_bess
+)
+
+# Use the MAXIMUM of spinning reserve calculation and optimization
+n_running_from_load = max(n_running_from_load, n_running_for_spinning)
+
+# Step 2: Calculate N+X for availability target
+avail_decimal = avail_req / 100
+mtbf_hours = gen_data["mtbf_hours"]
+mttr_hours = 48  # Realistic: 2 days repair time
+
 # ============================================================================
 # HYBRID ALGORITHM: Generate comparison table of Gen+BESS configurations
 # ============================================================================
@@ -969,11 +1111,21 @@ if use_bess:
 reliability_configs = []
 
 # Configuration A: No BESS (Baseline)
-# Config A must size for PEAK load without any BESS assistance
-n_running_for_peak = int(math.ceil(p_total_peak / unit_site_cap))
-config_a_running = max(n_running_for_peak, int(math.ceil(p_total_peak * 1.05 / unit_site_cap)))
+# Must calculate spinning reserve requirements WITHOUT BESS
+spinning_no_bess = calculate_spinning_reserve_units(
+    p_avg_load=p_total_avg,
+    unit_capacity=unit_site_cap,
+    spinning_reserve_pct=step_load_req,
+    use_bess=False,
+    bess_power_mw=0,
+    gen_step_capability_pct=gen_data["step_load_pct"]
+)
 
-print(f"[DEBUG] Config A: Sizing for peak={p_total_peak} MW, n_running={config_a_running}", file=sys.stderr)
+# Config A must size for PEAK load AND spinning reserve without any BESS assistance
+n_running_for_peak = int(math.ceil(p_total_peak / unit_site_cap))
+config_a_running = max(n_running_for_peak, spinning_no_bess['n_units_running'])
+
+print(f"[DEBUG] Config A: Sizing for peak={p_total_peak} MW, spinning reserve needs {spinning_no_bess['n_units_running']} units, final n_running={config_a_running}", file=sys.stderr)
 
 # Expand search range
 search_min_a = max(1, int(config_a_running * 0.95))  # Down to 95% 
@@ -983,8 +1135,8 @@ best_config_a = None
 
 # Search exhaustively for Config A
 for n_run in range(search_min_a, search_max_a):
-    # Config A: NO BESS - must cover PEAK load always
-    capacity_min_a = p_total_peak
+    # Config A: NO BESS - must cover PEAK load AND have spinning reserve headroom
+    capacity_min_a = spinning_no_bess['required_online_capacity']
     if n_run * unit_site_cap < capacity_min_a:
         continue
     
@@ -994,8 +1146,9 @@ for n_run in range(search_min_a, search_max_a):
         avg_avail, _ = calculate_availability_weibull(n_tot, n_run, mtbf_hours, project_years, gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"])
         
         if avg_avail >= avail_decimal:
-            # Calculate load per unit for Config A
-            load_pct_a = (p_total_peak / (n_run * unit_site_cap)) * 100
+            # Calculate load per unit for Config A - CORRECTLY considering spinning reserve
+            # Load/Unit = Average Load / Total Online Capacity
+            load_pct_a = (p_total_avg / (n_run * unit_site_cap)) * 100
             
             print(f"[DEBUG] Config A FOUND: n_run={n_run}, n_res={n_res}, total={n_tot}, load={load_pct_a:.1f}%, avail={avg_avail*100:.4f}%", file=sys.stderr)
             
@@ -1008,7 +1161,11 @@ for n_run in range(search_min_a, search_max_a):
                 'bess_mwh': 0,
                 'bess_credit': 0,
                 'availability': avg_avail,
-                'load_pct': load_pct_a  # NEW: Add pre-calculated load for table
+                'load_pct': load_pct_a,
+                'spinning_reserve_mw': spinning_no_bess['spinning_reserve_mw'],
+                'spinning_from_gens': spinning_no_bess['spinning_from_gens'],
+                'spinning_from_bess': 0,
+                'headroom_mw': n_run * unit_site_cap - p_total_avg
             }
             break
     if best_config_a:
@@ -1016,7 +1173,7 @@ for n_run in range(search_min_a, search_max_a):
 
 # If still not found, create fallback with CORRECT availability calculation
 if not best_config_a:
-    # Fallback: size for peak load
+    # Fallback: size for spinning reserve
     fallback_n_run = config_a_running
     fallback_n_res = 14
     fallback_n_tot = fallback_n_run + fallback_n_res
@@ -1029,8 +1186,8 @@ if not best_config_a:
         gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"]
     )
     
-    # Calculate load for peak
-    fallback_load_pct = (p_total_peak / (fallback_n_run * unit_site_cap)) * 100
+    # Calculate load - CORRECTLY
+    fallback_load_pct = (p_total_avg / (fallback_n_run * unit_site_cap)) * 100
     
     best_config_a = {
         'name': 'A: No BESS',
@@ -1041,7 +1198,11 @@ if not best_config_a:
         'bess_mwh': 0,
         'bess_credit': 0,
         'availability': fallback_avail,
-        'load_pct': fallback_load_pct
+        'load_pct': fallback_load_pct,
+        'spinning_reserve_mw': spinning_no_bess['spinning_reserve_mw'],
+        'spinning_from_gens': spinning_no_bess['spinning_from_gens'],
+        'spinning_from_bess': 0,
+        'headroom_mw': fallback_n_run * unit_site_cap - p_total_avg
     }
 
 reliability_configs.append(best_config_a)
@@ -1049,20 +1210,25 @@ reliability_configs.append(best_config_a)
 # Configuration B: BESS Transient Only
 if use_bess:
     # Debug logging
-    import sys
     print(f"[DEBUG] Config B: Starting calculation", file=sys.stderr)
     print(f"[DEBUG] p_total_avg={p_total_avg}, p_total_peak={p_total_peak}, unit_site_cap={unit_site_cap}", file=sys.stderr)
     
-    # With BESS for peak shaving, size for AVERAGE load (not efficiency target)
-    # BESS will cover the peak difference
+    # With BESS for spinning reserve, calculate requirements
+    spinning_with_bess = calculate_spinning_reserve_units(
+        p_avg_load=p_total_avg,
+        unit_capacity=unit_site_cap,
+        spinning_reserve_pct=step_load_req,
+        use_bess=True,
+        bess_power_mw=bess_power_transient,
+        gen_step_capability_pct=gen_data["step_load_pct"]
+    )
     
-    # Minimum n_running to cover average load + small margin
-    n_running_min_b = int(math.ceil(p_total_avg * 1.05 / unit_site_cap))
-    
-    # Don't over-size for efficiency - let it fall where it falls
+    # Minimum n_running with BESS covering spinning reserve
+    n_running_min_b = spinning_with_bess['n_units_running']
     n_running_optimal_b = n_running_min_b
     
-    print(f"[DEBUG] Config B: n_running for avg+5%: {n_running_optimal_b}", file=sys.stderr)
+    print(f"[DEBUG] Config B: BESS covers {spinning_with_bess['spinning_from_bess']:.1f} MW of spinning reserve", file=sys.stderr)
+    print(f"[DEBUG] Config B: n_running with BESS: {n_running_optimal_b} (vs {spinning_no_bess['n_units_running']} without BESS)", file=sys.stderr)
     
     best_config_b = None
     found_b = False
@@ -1076,8 +1242,8 @@ if use_bess:
         if n_run < n_running_min_b:
             continue
         
-        # Check capacity
-        if n_run * unit_site_cap < p_total_avg * 1.05:
+        # Check capacity (with BESS, only need to cover average + reduced spinning reserve)
+        if n_run * unit_site_cap < spinning_with_bess['required_online_capacity']:
             continue
         
         # Search for minimum reserve needed
@@ -1092,7 +1258,7 @@ if use_bess:
                 )
                 
                 if avg_avail >= avail_decimal:
-                    # Calculate metrics
+                    # Calculate metrics - CORRECTLY
                     load_pct_b = (p_total_avg / (n_run * unit_site_cap)) * 100
                     eff_b = get_part_load_efficiency(
                         gen_data["electrical_efficiency"],
@@ -1113,7 +1279,11 @@ if use_bess:
                         'availability': avg_avail,
                         'load_pct': load_pct_b,
                         'efficiency': eff_b,
-                        'score': eff_b
+                        'score': eff_b,
+                        'spinning_reserve_mw': spinning_with_bess['spinning_reserve_mw'],
+                        'spinning_from_gens': spinning_with_bess['spinning_from_gens'],
+                        'spinning_from_bess': spinning_with_bess['spinning_from_bess'],
+                        'headroom_mw': n_run * unit_site_cap - p_total_avg
                     }
                     found_b = True
                     break
@@ -1135,6 +1305,8 @@ if use_bess:
             gen_data["maintenance_duration_hrs"]
         )
         
+        fallback_load_b = (p_total_avg / (n_run_fallback * unit_site_cap)) * 100
+        
         best_config_b = {
             'name': 'B: BESS Transient (fallback)',
             'n_running': n_run_fallback,
@@ -1143,7 +1315,12 @@ if use_bess:
             'bess_mw': bess_power_transient,
             'bess_mwh': bess_energy_transient,
             'bess_credit': 0,
-            'availability': fallback_avail_b
+            'availability': fallback_avail_b,
+            'load_pct': fallback_load_b,
+            'spinning_reserve_mw': spinning_with_bess['spinning_reserve_mw'],
+            'spinning_from_gens': spinning_with_bess['spinning_from_gens'],
+            'spinning_from_bess': spinning_with_bess['spinning_from_bess'],
+            'headroom_mw': n_run_fallback * unit_site_cap - p_total_avg
         }
         reliability_configs.append(best_config_b)
 
@@ -1152,10 +1329,10 @@ if use_bess and bess_reliability_enabled:
     print(f"[DEBUG] Config C: Starting calculation", file=sys.stderr)
     
     # Start with same capacity-based sizing as Config B
-    n_running_min_c = int(math.ceil(p_total_avg * 1.05 / unit_site_cap))
+    n_running_min_c = spinning_with_bess['n_units_running']
     n_running_optimal_c = n_running_min_c
     
-    print(f"[DEBUG] Config C: n_running for avg+5%: {n_running_optimal_c}", file=sys.stderr)
+    print(f"[DEBUG] Config C: n_running for avg+spinning: {n_running_optimal_c}", file=sys.stderr)
     
     # BESS sizing for reliability
     if bess_strategy == 'Hybrid (Balanced)':
@@ -1212,10 +1389,6 @@ if use_bess and bess_reliability_enabled:
         # Fallback: estimate from Config A or use default
         config_b_reserve = best_config_a['n_reserve'] if best_config_a and 'n_reserve' in best_config_a else 8
     
-    # Strategy CHANGED: Try LOWER reserve first, trusting BESS will compensate
-    # Config B needs n_reserve=6 without BESS backup
-    # Config C tries LOWER reserve (e.g., n_reserve=2-4) knowing BESS provides backup
-    
     print(f"[DEBUG] Config C: Config B used n_reserve={config_b_reserve}, will try LOWER reserve with BESS backup", file=sys.stderr)
     
     # Search for best config - try with LESS reserve than Config B
@@ -1227,20 +1400,16 @@ if use_bess and bess_reliability_enabled:
         if n_run < n_running_min_c:
             continue
         
-        if n_run * unit_site_cap < p_total_avg * 1.05:
+        if n_run * unit_site_cap < spinning_with_bess['required_online_capacity']:
             continue
         
         # NEW STRATEGY: Try lower reserve values (0 to config_b_reserve)
-        # The idea: BESS can cover failures, so we need less genset redundancy
         for n_res_try in range(max(1, config_b_reserve - 10), config_b_reserve + 2):
             n_tot = n_run + n_res_try
             
             print(f"[DEBUG] Config C: Trying n_run={n_run}, n_res={n_res_try}, total={n_tot} (vs Config B's {config_b_reserve})", file=sys.stderr)
             
             try:
-                # Check if this config meets availability
-                # Note: BESS doesn't directly affect the binomial calculation,
-                # but it provides backup power during outages
                 avg_avail, _ = calculate_availability_weibull(
                     n_tot, n_run, mtbf_hours, project_years,
                     gen_data["maintenance_interval_hrs"],
@@ -1248,9 +1417,7 @@ if use_bess and bess_reliability_enabled:
                 )
                 
                 # BESS provides additional reliability margin
-                # Adjust availability upward to account for BESS backup
-                # This is conservative - BESS can bridge during genset failures
-                bess_reliability_boost = min(0.0005, bess_credit_int * 0.00005)  # Small boost
+                bess_reliability_boost = min(0.0005, bess_credit_int * 0.00005)
                 avg_avail_with_bess = min(0.9999, avg_avail + bess_reliability_boost)
                 
                 print(f"[DEBUG] Config C: Avail without BESS={avg_avail*100:.4f}%, with BESS boost={avg_avail_with_bess*100:.4f}%", file=sys.stderr)
@@ -1277,7 +1444,11 @@ if use_bess and bess_reliability_enabled:
                         'credit_breakdown': credit_breakdown,
                         'load_pct': load_pct_c,
                         'efficiency': eff_c,
-                        'score': eff_c
+                        'score': eff_c,
+                        'spinning_reserve_mw': spinning_with_bess['spinning_reserve_mw'],
+                        'spinning_from_gens': spinning_with_bess['spinning_from_gens'],
+                        'spinning_from_bess': spinning_with_bess['spinning_from_bess'],
+                        'headroom_mw': n_run * unit_site_cap - p_total_avg
                     }
                     found_c = True
                     break
@@ -1300,6 +1471,8 @@ if use_bess and bess_reliability_enabled:
             gen_data["maintenance_duration_hrs"]
         )
         
+        fallback_load_c = (p_total_avg / (n_run_fallback * unit_site_cap)) * 100
+        
         best_config_c = {
             'name': f'C: {bess_strategy} (fallback)',
             'n_running': n_run_fallback,
@@ -1308,7 +1481,12 @@ if use_bess and bess_reliability_enabled:
             'bess_mw': bess_power_hybrid,
             'bess_mwh': bess_energy_hybrid,
             'bess_credit': bess_credit_conservative,
-            'availability': fallback_avail_c
+            'availability': fallback_avail_c,
+            'load_pct': fallback_load_c,
+            'spinning_reserve_mw': spinning_with_bess['spinning_reserve_mw'],
+            'spinning_from_gens': spinning_with_bess['spinning_from_gens'],
+            'spinning_from_bess': spinning_with_bess['spinning_from_bess'],
+            'headroom_mw': n_run_fallback * unit_site_cap - p_total_avg
         }
         reliability_configs.append(best_config_c)
 
@@ -1329,7 +1507,11 @@ else:
         'bess_mw': bess_power_transient if use_bess else 0,
         'bess_mwh': bess_energy_transient if use_bess else 0,
         'bess_credit': 0,
-        'availability': 0.9999
+        'availability': 0.9999,
+        'load_pct': (p_total_avg / (n_running_from_load * unit_site_cap)) * 100,
+        'spinning_reserve_mw': spinning_reserve_mw,
+        'spinning_from_gens': spinning_from_gens,
+        'spinning_from_bess': spinning_from_bess
     }
 
 # Extract final values
@@ -1340,6 +1522,9 @@ prob_gen = selected_config['availability']
 bess_power_total = selected_config['bess_mw']
 bess_energy_total = selected_config['bess_mwh']
 target_met = prob_gen >= avail_decimal
+
+# CRITICAL: Use the load_pct from the selected config (properly calculated with spinning reserve)
+load_per_unit_pct = selected_config['load_pct']
 
 # Update BESS breakdown
 if use_bess and bess_power_total > 0:
@@ -1385,8 +1570,6 @@ elif not target_met:
         "- Add grid backup connection"
     )
 
-
-
 # Load Distribution Strategy
 st.sidebar.markdown("⚡ **Load Distribution**")
 load_strategy = st.sidebar.radio(
@@ -1402,44 +1585,23 @@ elif load_strategy == "Spinning Reserve (N+1)":
 else:
     units_running = n_running
 
-load_per_unit_pct = (p_total_avg / (units_running * unit_site_cap)) * 100
-
-# Fleet efficiency at operating point (use precalculated if available)
-if 'fleet_efficiency_temp' in locals():
-    fleet_efficiency = fleet_efficiency_temp
-else:
-    fleet_efficiency = get_part_load_efficiency(
-        gen_data["electrical_efficiency"],
-        load_per_unit_pct,
-        gen_data["type"]
-    )
-
-# BESS Sizing (if enabled)
-bess_power_total = 0.0
-bess_energy_total = 0.0
-bess_breakdown = {}
-
-if use_bess:
-    bess_power_total, bess_energy_total, bess_breakdown = calculate_bess_requirements(
-        p_total_avg, p_total_peak, step_load_req,
-        gen_data["ramp_rate_mw_s"], gen_data["step_load_pct"],
-        enable_black_start
-    )
+# Fleet efficiency at operating point
+fleet_efficiency = get_part_load_efficiency(
+    gen_data["electrical_efficiency"],
+    load_per_unit_pct,
+    gen_data["type"]
+)
 
 # Voltage recommendation (adjusted for off-grid data centers)
 if volt_mode == "Auto-Recommend":
-    # For off-grid data centers, use medium voltage distribution
-    # High voltage (138+ kV) is only for grid interconnection
     if installed_cap < 10:
-        rec_voltage_kv = 4.16  # Low voltage distribution
+        rec_voltage_kv = 4.16
     elif installed_cap < 50:
-        rec_voltage_kv = 13.8  # Standard medium voltage
+        rec_voltage_kv = 13.8
     elif installed_cap < 200:
-        rec_voltage_kv = 34.5  # High medium voltage (max for off-grid)
+        rec_voltage_kv = 34.5
     else:
-        # For very large installations (>200 MW), may need dual voltage
-        rec_voltage_kv = 34.5  # Still medium voltage for DC delivery
-        # Note: Could also use 69 kV for transmission between gen and DC
+        rec_voltage_kv = 34.5
 else:
     rec_voltage_kv = manual_voltage_kv
 
@@ -1453,7 +1615,7 @@ stability_ok, voltage_sag = transient_stability_check(
 # ==============================================================================
 
 # Calculate footprint per component
-area_per_gen = 1 / gen_data["power_density_mw_per_m2"]  # m² per MW
+area_per_gen = 1 / gen_data["power_density_mw_per_m2"]
 area_gen = n_total * unit_site_cap * area_per_gen
 
 area_bess = bess_power_total * 30 if use_bess else 0
@@ -1484,12 +1646,10 @@ area_utilization_pct = (total_area_m2 / max_area_m2) * 100 if enable_footprint_l
 footprint_recommendations = []
 
 if is_area_exceeded and enable_footprint_limit:
-    # Option 1: Switch to higher density technology
     current_density = gen_data["power_density_mw_per_m2"]
     
     for alt_gen_name, alt_gen_data in available_gens.items():
         if alt_gen_data["power_density_mw_per_m2"] > current_density * 1.3:
-            # Calculate new footprint
             alt_area_per_gen = 1 / alt_gen_data["power_density_mw_per_m2"]
             alt_unit_cap = alt_gen_data["iso_rating_mw"] * derate_factor_calc
             alt_n_running = math.ceil(p_total_peak / alt_unit_cap)
@@ -1506,13 +1666,11 @@ if is_area_exceeded and enable_footprint_limit:
                     'trade_off': f'Efficiency: {alt_gen_data["electrical_efficiency"]*100:.1f}% vs {gen_data["electrical_efficiency"]*100:.1f}%'
                 })
     
-    # Option 2: Reduce redundancy
     if n_reserve > 0:
         reduced_n = n_total - 1
         reduced_area_gen = reduced_n * unit_site_cap * area_per_gen
         reduced_total_area = (reduced_area_gen + storage_area_m2 + area_chp + area_bess + area_sub) * 1.2
         
-        # Calculate new availability
         reduced_avail, _ = calculate_availability_weibull(reduced_n, n_running, mtbf_hours, project_years, gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"])
         
         if reduced_total_area <= max_area_m2:
@@ -1667,15 +1825,15 @@ effective_hours = 8760 * capacity_factor
 mwh_year = p_total_avg * effective_hours
 
 # O&M Fixed ($/kW-year)
-om_fixed_kw_yr = 15.0  # Parts, insurance, property tax
+om_fixed_kw_yr = 15.0
 om_fixed_annual = (installed_cap * 1000) * om_fixed_kw_yr
 
 # O&M Variable ($/MWh)
-om_variable_mwh = 3.5  # Consumables, oil, filters
+om_variable_mwh = 3.5
 om_variable_annual = mwh_year * om_variable_mwh
 
 # O&M Labor
-om_labor_per_unit = 120000  # $/unit-year
+om_labor_per_unit = 120000
 om_labor_annual = n_total * om_labor_per_unit
 
 # Major overhaul (60k hours)
@@ -1782,6 +1940,108 @@ with t1:
     c5.metric("PUE", f"{pue_actual:.2f}")
     c6.metric("Density", f"{gen_data['power_density_mw_per_m2']*1000:.0f} kW/m²")
     
+    # ===========================================================================
+    # NEW: SPINNING RESERVE IMPACT VISUALIZATION
+    # ===========================================================================
+    st.markdown("### 🔄 Spinning Reserve & Load Distribution")
+    
+    col_sr1, col_sr2, col_sr3, col_sr4 = st.columns(4)
+    
+    col_sr1.metric(
+        "Spinning Reserve Required",
+        f"{selected_config.get('spinning_reserve_mw', spinning_reserve_mw):.1f} MW",
+        f"{step_load_req:.0f}% of avg load"
+    )
+    
+    col_sr2.metric(
+        "From Generators",
+        f"{selected_config.get('spinning_from_gens', spinning_from_gens):.1f} MW",
+        "Headroom in running units"
+    )
+    
+    col_sr3.metric(
+        "From BESS",
+        f"{selected_config.get('spinning_from_bess', spinning_from_bess):.1f} MW" if use_bess else "N/A",
+        "Instant response" if use_bess else ""
+    )
+    
+    col_sr4.metric(
+        "Load/Unit",
+        f"{load_per_unit_pct:.1f}%",
+        f"Headroom: {100 - load_per_unit_pct:.1f}%"
+    )
+    
+    # Explanation of spinning reserve impact
+    if use_bess:
+        units_diff = best_config_a['n_running'] - selected_config['n_running'] if best_config_a else 0
+        load_diff = selected_config['load_pct'] - best_config_a['load_pct'] if best_config_a else 0
+        
+        if units_diff > 0 or load_diff > 0:
+            st.success(
+                f"✅ **BESS Spinning Reserve Benefit:**\n\n"
+                f"- Without BESS: {best_config_a['n_running']} running units at {best_config_a['load_pct']:.1f}% load\n"
+                f"- With BESS: {selected_config['n_running']} running units at {selected_config['load_pct']:.1f}% load\n"
+                f"- **Result:** {units_diff} fewer units, {load_diff:.1f}% higher load = better efficiency!"
+            )
+    else:
+        st.info(
+            f"ℹ️ **Spinning Reserve Strategy (No BESS):**\n\n"
+            f"- Running {n_running} units at {load_per_unit_pct:.1f}% load each\n"
+            f"- Headroom for spinning reserve: {selected_config.get('headroom_mw', n_running * unit_site_cap - p_total_avg):.1f} MW\n"
+            f"- All spinning reserve must come from generator headroom"
+        )
+    
+    # Visual: Load Distribution Bar Chart
+    fig_load_dist = go.Figure()
+    
+    # For each running unit
+    load_per_unit_mw = p_total_avg / n_running
+    headroom_per_unit_mw = unit_site_cap - load_per_unit_mw
+    
+    fig_load_dist.add_trace(go.Bar(
+        name='Actual Load',
+        x=[f'Gen {i+1}' for i in range(min(n_running, 10))],  # Show max 10 units
+        y=[load_per_unit_mw] * min(n_running, 10),
+        marker_color='#1f77b4',
+        text=[f'{load_per_unit_pct:.1f}%'] * min(n_running, 10),
+        textposition='inside'
+    ))
+    
+    fig_load_dist.add_trace(go.Bar(
+        name='Spinning Reserve (Headroom)',
+        x=[f'Gen {i+1}' for i in range(min(n_running, 10))],
+        y=[headroom_per_unit_mw] * min(n_running, 10),
+        marker_color='#90EE90',
+        text=[f'{100-load_per_unit_pct:.1f}%'] * min(n_running, 10),
+        textposition='inside'
+    ))
+    
+    if use_bess and bess_power_total > 0:
+        fig_load_dist.add_trace(go.Bar(
+            name='BESS Reserve',
+            x=['BESS'],
+            y=[bess_power_total],
+            marker_color='#FFD700',
+            text=[f'{bess_power_total:.1f} MW'],
+            textposition='inside'
+        ))
+    
+    fig_load_dist.update_layout(
+        title=f"Load Distribution Across {n_running} Running Units (showing up to 10)",
+        barmode='stack',
+        yaxis_title='Power (MW)',
+        height=400
+    )
+    
+    fig_load_dist.add_hline(
+        y=unit_site_cap,
+        line_dash="dash",
+        line_color="red",
+        annotation_text=f"Unit Capacity: {unit_site_cap:.1f} MW"
+    )
+    
+    st.plotly_chart(fig_load_dist, use_container_width=True)
+    
     # Load Profile Visualization
     st.markdown("### 📈 Annual Load Profile & Duration Curve")
     
@@ -1802,11 +2062,11 @@ with t1:
         annotation_position="top right"
     )
     
-    # Show genset capacity line
-    genset_capacity = n_running * unit_site_cap
+    # Show genset online capacity line
+    genset_online_capacity = n_running * unit_site_cap
     fig_ldc.add_hline(
-        y=genset_capacity, line_dash="dashdot", line_color="green",
-        annotation_text=f"Genset Capacity: {genset_capacity:.1f} MW",
+        y=genset_online_capacity, line_dash="dashdot", line_color="green",
+        annotation_text=f"Online Capacity: {genset_online_capacity:.1f} MW",
         annotation_position="bottom right"
     )
     
@@ -1815,89 +2075,30 @@ with t1:
         annotation_text=f"Average: {p_total_avg:.1f} MW"
     )
     
+    # Show spinning reserve zone
+    fig_ldc.add_hrect(
+        y0=p_total_avg, y1=p_total_avg + spinning_reserve_mw,
+        fillcolor="lightgreen", opacity=0.3,
+        annotation_text=f"Spinning Reserve: {spinning_reserve_mw:.1f} MW",
+        annotation_position="top left"
+    )
+    
     # Show BESS peak shaving zone if applicable
-    if use_bess and p_total_peak > genset_capacity:
+    if use_bess and p_total_peak > genset_online_capacity:
         fig_ldc.add_hrect(
-            y0=genset_capacity, y1=p_total_peak,
+            y0=genset_online_capacity, y1=p_total_peak,
             fillcolor="yellow", opacity=0.2,
             annotation_text=f"BESS Peak Shaving Zone ({bess_power_total:.1f} MW)",
             annotation_position="top left"
         )
     
     fig_ldc.update_layout(
-        title="Load Duration Curve (with BESS Peak Shaving Strategy)" if use_bess else "Load Duration Curve",
+        title="Load Duration Curve with Spinning Reserve Visualization",
         xaxis_title="Hours per Year (Sorted)",
         yaxis_title="Load (MW)",
         height=400
     )
     st.plotly_chart(fig_ldc, use_container_width=True)
-    
-    # Show sizing strategy explanation
-    if use_bess:
-        st.info(f"💡 **BESS Peak Shaving Strategy:**\n"
-                f"- Gensets sized for **{genset_capacity:.1f} MW** (average + margin)\n"
-                f"- BESS covers **{(p_total_peak - genset_capacity):.1f} MW** peak difference\n"
-                f"- Result: **Fewer gensets**, **higher efficiency** ({fleet_efficiency*100:.1f}% vs ~{get_part_load_efficiency(gen_data['electrical_efficiency'], 60, gen_data['type'])*100:.1f}% without BESS)")
-
-    
-    # Fleet optimization results
-    if fleet_options:
-        st.markdown("### 🎯 Fleet Optimization Analysis")
-        
-        opt_data = []
-        for n, data in fleet_options.items():
-            opt_data.append({
-                'Units': n,
-                'Load (%)': data['load_pct'],
-                'Efficiency (%)': data['efficiency'] * 100,
-                'Score': data['score']
-            })
-        df_opt = pd.DataFrame(opt_data)
-        
-        col_opt1, col_opt2 = st.columns([2, 1])
-        
-        with col_opt1:
-            fig_opt = go.Figure()
-            fig_opt.add_trace(go.Scatter(
-                x=df_opt['Units'], y=df_opt['Efficiency (%)'],
-                mode='lines+markers', name='Efficiency',
-                line=dict(color='#28a745', width=3)
-            ))
-            fig_opt.update_layout(
-                title="Fleet Size vs Efficiency",
-                xaxis_title="Number of Running Units",
-                yaxis_title="Fleet Efficiency (%)",
-                height=300
-            )
-            st.plotly_chart(fig_opt, use_container_width=True)
-        
-        with col_opt2:
-            st.dataframe(df_opt, use_container_width=True)
-            st.success(f"✅ **Optimal:** {n_running} units at {load_per_unit_pct:.1f}% load")
-    
-    # Part-load efficiency curve
-    st.markdown("### 📉 Part-Load Efficiency Curve")
-    
-    load_range = np.linspace(30, 100, 50)
-    eff_curve = [get_part_load_efficiency(gen_data["electrical_efficiency"], load, gen_data["type"]) * 100 
-                 for load in load_range]
-    
-    fig_eff = go.Figure()
-    fig_eff.add_trace(go.Scatter(
-        x=load_range, y=eff_curve, mode='lines',
-        name='Efficiency', line=dict(color='#28a745', width=3)
-    ))
-    fig_eff.add_vline(
-        x=load_per_unit_pct, line_dash="dash", line_color="red",
-        annotation_text=f"Operating: {load_per_unit_pct:.0f}%"
-    )
-    fig_eff.update_layout(
-        title=f"Efficiency vs Load - {gen_data['type']}",
-        xaxis_title="Load (%)",
-        yaxis_title="Electrical Efficiency (%)",
-        height=350
-    )
-    st.plotly_chart(fig_eff, use_container_width=True)
     
     # Fleet details
     st.markdown("### 🔧 Fleet Configuration Details")
@@ -1918,7 +2119,7 @@ with t1:
         st.markdown("**Operating Parameters:**")
         st.write(f"- Strategy: {load_strategy}")
         st.write(f"- Units Running: {units_running} of {n_total}")
-        st.write(f"- Load per Unit: {load_per_unit_pct:.1f}%")
+        st.write(f"- **Load per Unit: {load_per_unit_pct:.1f}%** ← Spinning Reserve Impact")
         st.write(f"- Fleet Efficiency: {fleet_efficiency*100:.1f}%")
         st.write(f"- Capacity Factor: {capacity_factor*100:.0f}%")
         st.write(f"- Hours/Year: {effective_hours:.0f}")
@@ -1928,31 +2129,28 @@ with t2:
     st.subheader("Electrical Performance & Stability")
     
     # ========================================================================
-    # RELIABILITY TRADE-OFFS TABLE (NEW)
+    # RELIABILITY TRADE-OFFS TABLE
     # ========================================================================
     if len(reliability_configs) > 1:
         st.markdown("### ⚖️ Reliability Configuration Comparison")
         
-        # Build comparison table
+        # Build comparison table with spinning reserve info
         comparison_data = []
         for config in reliability_configs:
             # Calculate CAPEX
-            genset_capex = config['n_total'] * unit_site_cap * gen_data['est_cost_kw'] / 1000  # M$
-            bess_capex = config['bess_mwh'] * 0.3  # M$ (assuming $300k/MWh)
+            genset_capex = config['n_total'] * unit_site_cap * gen_data['est_cost_kw'] / 1000
+            bess_capex = config['bess_mwh'] * 0.3
             total_capex = genset_capex + bess_capex
             
             # Calculate O&M/year
-            genset_om = config['n_total'] * 120  # k$/unit-year
-            bess_om = config['bess_mwh'] * 10    # k$/MWh-year
-            total_om = (genset_om + bess_om) / 1000  # M$/year
+            genset_om = config['n_total'] * 120
+            bess_om = config['bess_mwh'] * 10
+            total_om = (genset_om + bess_om) / 1000
             
-            # Use pre-calculated values if available, otherwise calculate
             running_units = config['n_running']
             
-            if 'load_pct' in config:
-                load_per_unit = config['load_pct']
-            else:
-                load_per_unit = (p_total_avg / (running_units * unit_site_cap)) * 100
+            # Get load_pct from config (now properly calculated)
+            load_per_unit = config.get('load_pct', (p_total_avg / (running_units * unit_site_cap)) * 100)
             
             if 'efficiency' in config:
                 config_efficiency = config['efficiency']
@@ -1963,9 +2161,8 @@ with t2:
                     gen_data["type"]
                 )
             
-            # Annual energy and fuel
-            annual_energy_gwh = (p_total_avg * 8760 * capacity_factor) / 1000  # GWh
-            annual_fuel_mmbtu = (annual_energy_gwh * 1000 * 3.412) / config_efficiency  # MMBtu
+            annual_energy_gwh = (p_total_avg * 8760 * capacity_factor) / 1000
+            annual_fuel_mmbtu = (annual_energy_gwh * 1000 * 3.412) / config_efficiency
             
             comparison_data.append({
                 'Configuration': config['name'],
@@ -1973,13 +2170,10 @@ with t2:
                 'Total Units': config['n_total'],
                 'BESS (MW/MWh)': f"{config['bess_mw']:.0f}/{config['bess_mwh']:.0f}" if config['bess_mw'] > 0 else "None",
                 'Load/Unit (%)': f"{load_per_unit:.1f}%",
+                'Spinning from BESS': f"{config.get('spinning_from_bess', 0):.1f} MW" if config.get('spinning_from_bess', 0) > 0 else "-",
                 'Fleet Eff (%)': f"{config_efficiency*100:.1f}%",
-                'BESS Credit': f"{config['bess_credit']:.1f}" if config['bess_credit'] > 0 else "-",
                 'Availability': f"{config['availability']*100:.3f}%",
-                'Energy (GWh/yr)': f"{annual_energy_gwh:.1f}",
-                'Fuel (M MMBtu/yr)': f"{annual_fuel_mmbtu/1e6:.2f}",
                 'CAPEX (M$)': f"${total_capex:.1f}M",
-                'O&M (M$/yr)': f"${total_om:.2f}M"
             })
         
         df_comparison = pd.DataFrame(comparison_data)
@@ -2007,15 +2201,15 @@ with t2:
             )
         
         with col_sel2:
-            if selected_config['bess_credit'] > 0:
-                units_saved = best_config_a['n_total'] - selected_config['n_total'] if best_config_a else 0
+            load_improvement = selected_config['load_pct'] - best_config_a['load_pct'] if best_config_a else 0
+            if load_improvement > 0:
                 st.metric(
-                    "Units Saved vs No BESS",
-                    f"{units_saved} gensets",
-                    delta=f"${units_saved * 3:.0f}M CAPEX saved" if units_saved > 0 else "N/A"
+                    "Load/Unit Improvement",
+                    f"+{load_improvement:.1f}%",
+                    delta=f"Higher efficiency from BESS"
                 )
             else:
-                st.metric("BESS Strategy", "Transient Only", delta="No reliability credit")
+                st.metric("Load/Unit", f"{selected_config['load_pct']:.1f}%")
         
         with col_sel3:
             st.metric(
@@ -2025,31 +2219,6 @@ with t2:
                 delta_color="normal" if target_met else "inverse"
             )
         
-        # Show BESS credit breakdown if applicable
-        if 'credit_breakdown' in selected_config and selected_config['bess_credit'] > 0:
-            with st.expander("🔍 BESS Reliability Credit Details"):
-                breakdown = selected_config['credit_breakdown']
-                
-                st.markdown("**Credit Calculation:**")
-                col_b1, col_b2 = st.columns(2)
-                
-                with col_b1:
-                    st.write(f"- **Power Credit:** {breakdown['power_credit']:.1f} units")
-                    st.write(f"  (BESS {selected_config['bess_mw']:.0f} MW / Gen {unit_site_cap:.1f} MW)")
-                    st.write(f"- **Energy Credit:** {breakdown['energy_credit']:.1f} units")
-                    st.write(f"  (BESS {selected_config['bess_mwh']:.0f} MWh / {mttr_hours} hrs outage)")
-                
-                with col_b2:
-                    st.write(f"- **Raw Credit:** {breakdown['raw_credit']:.1f} units")
-                    st.write(f"- **BESS Availability:** {breakdown['bess_availability']*100:.0f}%")
-                    st.write(f"- **Coverage Factor:** {breakdown['coverage_factor']*100:.0f}%")
-                    st.write(f"- **→ Effective Credit:** {breakdown['effective_credit']:.1f} units")
-                
-                st.caption(
-                    f"💡 BESS can sustain {selected_config['bess_mw']:.0f} MW for "
-                    f"{breakdown['bess_duration_hrs']:.1f} hours, covering typical {mttr_hours}hr repair time."
-                )
-        
         st.markdown("---")
     
     col_e1, col_e2, col_e3, col_e4 = st.columns(4)
@@ -2058,33 +2227,21 @@ with t2:
     col_e3.metric("X\"d", f"{gen_data['reactance_xd_2']:.3f} pu")
     col_e4.metric("Ramp Rate", f"{gen_data['ramp_rate_mw_s']:.1f} MW/s")
     
-    # ========================================================================
-    # NET EFFICIENCY & HEAT RATE (NEW)
-    # ========================================================================
+    # Net Efficiency & Heat Rate
     st.markdown("### ⚙️ Net Efficiency & Heat Rate")
     
-    # Calculate auxiliaries and losses
-    aux_power_pct = 2.0  # Typical: cooling, fuel pumps, controls = 2%
-    mechanical_losses_pct = 1.5  # Bearings, coupling, etc = 1.5%
+    aux_power_pct = 2.0
+    mechanical_losses_pct = 1.5
     
-    # Gross electrical efficiency (from generator)
     gross_efficiency = fleet_efficiency
-    
-    # Net efficiency (after auxiliaries)
     aux_consumption = p_total_avg * (aux_power_pct / 100)
     net_output = p_total_avg - aux_consumption
     net_efficiency = gross_efficiency * (1 - aux_power_pct/100)
     
-    # Heat Rate calculations
-    # Heat Rate = 3412 BTU/kWh / Efficiency
-    # LHV to HHV conversion: HHV = LHV × 1.11 (for natural gas)
-    
-    heat_rate_lhv_btu = 3412 / net_efficiency  # BTU/kWh (LHV)
-    heat_rate_hhv_btu = heat_rate_lhv_btu * 1.11  # BTU/kWh (HHV)
-    
-    # MJ/kWh conversion: 1 BTU = 0.001055 MJ
-    heat_rate_lhv_mj = heat_rate_lhv_btu * 0.001055  # MJ/kWh (LHV)
-    heat_rate_hhv_mj = heat_rate_hhv_btu * 0.001055  # MJ/kWh (HHV)
+    heat_rate_lhv_btu = 3412 / net_efficiency
+    heat_rate_hhv_btu = heat_rate_lhv_btu * 1.11
+    heat_rate_lhv_mj = heat_rate_lhv_btu * 0.001055
+    heat_rate_hhv_mj = heat_rate_hhv_btu * 0.001055
     
     col_eff1, col_eff2, col_eff3, col_eff4 = st.columns(4)
     
@@ -2111,84 +2268,6 @@ with t2:
         else:
             st.metric("Heat Rate (LHV)", f"{heat_rate_lhv_mj:.2f}")
             st.caption("MJ/kWh")
-    
-    # Losses breakdown
-    with st.expander("📊 Efficiency & Losses Breakdown"):
-        st.markdown("**Power Flow (100 MW IT Load Example):**")
-        
-        fuel_input = p_total_avg / net_efficiency
-        
-        losses_data = pd.DataFrame({
-            'Stage': [
-                '1. Fuel Input',
-                '2. Combustion → Shaft',
-                '3. Shaft → Electrical',
-                '4. Gross Electrical',
-                '5. Auxiliaries',
-                '6. Net Output to DC'
-            ],
-            'Power (MW)': [
-                fuel_input,
-                fuel_input * gross_efficiency,
-                p_total_avg,
-                p_total_avg,
-                aux_consumption,
-                net_output
-            ],
-            'Efficiency (%)': [
-                100.0,
-                gross_efficiency * 100,
-                gross_efficiency * 100,
-                gross_efficiency * 100,
-                (1 - aux_power_pct/100) * 100,
-                net_efficiency * 100
-            ],
-            'Losses (MW)': [
-                0,
-                fuel_input * (1 - gross_efficiency),
-                0,
-                0,
-                aux_consumption,
-                0
-            ]
-        })
-        
-        col_loss1, col_loss2 = st.columns([2, 1])
-        
-        with col_loss1:
-            fig_losses = go.Figure()
-            
-            # Sankey-style data
-            stages = losses_data['Stage'].tolist()
-            power_values = losses_data['Power (MW)'].tolist()
-            
-            fig_losses.add_trace(go.Bar(
-                x=stages,
-                y=power_values,
-                text=[f"{p:.1f} MW" for p in power_values],
-                textposition='outside',
-                marker_color=['#2ca02c', '#ff7f0e', '#1f77b4', '#1f77b4', '#d62728', '#2ca02c']
-            ))
-            
-            fig_losses.update_layout(
-                title="Power Flow from Fuel to DC Load",
-                xaxis_title="Stage",
-                yaxis_title="Power (MW)",
-                height=400,
-                showlegend=False
-            )
-            
-            st.plotly_chart(fig_losses, use_container_width=True)
-        
-        with col_loss2:
-            st.dataframe(losses_data, use_container_width=True, hide_index=True)
-            
-            st.markdown("**Summary:**")
-            total_losses = fuel_input - net_output
-            st.write(f"• Fuel Input: {fuel_input:.1f} MW")
-            st.write(f"• Total Losses: {total_losses:.1f} MW ({(total_losses/fuel_input)*100:.1f}%)")
-            st.write(f"• Net Output: {net_output:.1f} MW")
-            st.write(f"• Net Efficiency: {net_efficiency*100:.2f}%")
     
     st.markdown("---")
     
@@ -2219,30 +2298,15 @@ with t2:
     if use_bess:
         st.info(f"🔋 **BESS Capacity:** {bess_power_total:.1f} MW / {bess_energy_total:.1f} MWh")
         
-        # Show BESS strategy
-        peak_vs_avg = p_total_peak - p_total_avg
-        
-        # Calculate units saved (if n_running_from_load is available)
-        if 'n_running_from_load' in locals() or 'n_running_from_load' in globals():
-            units_saved = n_running_from_load - n_running  # Positive if we saved units
-        else:
-            units_saved = 0
-        
-        if peak_vs_avg > 0 and units_saved > 0:
-            st.success(f"✅ **BESS Peak Shaving:** Gensets sized for {p_total_avg:.1f} MW average. "
-                      f"BESS covers {peak_vs_avg:.1f} MW peak difference → **{units_saved} fewer gensets needed**")
-        elif peak_vs_avg > 0:
-            st.success(f"✅ **BESS Peak Shaving:** Gensets sized for {p_total_avg:.1f} MW average. "
-                      f"BESS covers {peak_vs_avg:.1f} MW peak difference")
-        
         # BESS Breakdown
         bess_breakdown_data = pd.DataFrame({
-            'Component': ['Step Support', 'Peak Shaving', 'Ramp Support', 'Freq Reg', 'Black Start'],
+            'Component': ['Step Support', 'Peak Shaving', 'Ramp Support', 'Freq Reg', 'Spinning Reserve', 'Black Start'],
             'Power (MW)': [
                 bess_breakdown.get('step_support', 0),
                 bess_breakdown.get('peak_shaving', 0),
                 bess_breakdown.get('ramp_support', 0),
                 bess_breakdown.get('freq_reg', 0),
+                bess_breakdown.get('spinning_reserve', 0),
                 bess_breakdown.get('black_start', 0)
             ]
         })
@@ -2263,6 +2327,8 @@ with t2:
         
         with col_bess2:
             st.markdown("**BESS Functions:**")
+            if bess_breakdown.get('spinning_reserve', 0) > 0:
+                st.write(f"✅ **Spinning Reserve: {bess_breakdown['spinning_reserve']:.1f} MW**")
             if bess_breakdown.get('peak_shaving', 0) > 0:
                 st.write(f"✅ Peak Shaving: {bess_breakdown['peak_shaving']:.1f} MW")
             if bess_breakdown.get('step_support', 0) > 0:
@@ -2280,23 +2346,12 @@ with t2:
     # Reliability over time (Weibull)
     st.markdown("### 📊 Reliability Projection (Aging Model)")
     
-    # Add warning if target not met
     if not target_met:
         st.error(f"🛑 **Availability Target Not Achieved**")
         col_gap1, col_gap2, col_gap3 = st.columns(3)
         col_gap1.metric("Target", f"{avail_req:.3f}%")
         col_gap2.metric("Achieved", f"{prob_gen*100:.3f}%", f"-{(avail_req - prob_gen*100):.3f}%")
         col_gap3.metric("Configuration", f"N+{n_reserve} (Maximum)")
-        
-        st.warning("**Root Causes:**\n"
-                  f"- Generator MTBF: {mtbf_hours:,} hours\n"
-                  f"- Fleet degradation over {project_years} years (0.5%/year)\n"
-                  f"- Binomial reliability model with aging\n\n"
-                  "**Solutions:**\n"
-                  "1. Select generator with higher MTBF (e.g., Gas Turbine: 80k hrs)\n"
-                  "2. Reduce project life for analysis\n"
-                  "3. Accept lower availability target\n"
-                  "4. Implement predictive maintenance program")
     else:
         st.success(f"✅ **Availability Target Met:** {prob_gen*100:.3f}% ≥ {avail_req:.3f}% with N+{n_reserve}")
     
@@ -2335,7 +2390,6 @@ with t2:
 with t3:
     st.subheader("Footprint Analysis & Optimization")
     
-    # Footprint metrics
     col_fp1, col_fp2, col_fp3 = st.columns(3)
     col_fp1.metric("Total Footprint", f"{disp_area:.2f} {disp_area_unit}")
     col_fp2.metric("Power Density", f"{gen_data['power_density_mw_per_m2']:.3f} MW/m²")
@@ -2363,7 +2417,6 @@ with t3:
     with col_pie2:
         st.dataframe(footprint_data, use_container_width=True)
     
-    # Optimization recommendations
     if is_area_exceeded and footprint_recommendations:
         st.error(f"🛑 **Footprint Exceeded:** {total_area_m2:,.0f} m² > {max_area_m2:,.0f} m² ({(total_area_m2/max_area_m2-1)*100:.0f}% over)")
         
@@ -2375,11 +2428,6 @@ with t3:
                 st.write(f"**New Footprint:** {rec['new_area']:,.0f} m² ({rec['new_area']/10000:.2f} Ha)")
                 st.write(f"**Savings:** {rec['savings_pct']:.1f}%")
                 st.write(f"**Trade-off:** {rec['trade_off']}")
-                
-                if rec['type'] == 'Switch Technology':
-                    st.info("✅ **Recommended:** Higher density technology maintains performance")
-                elif rec['type'] == 'Reduce Redundancy':
-                    st.warning("⚠️ **Risk:** Lower availability - evaluate criticality")
     
     elif enable_footprint_limit:
         st.success(f"✅ **Footprint OK:** {area_utilization_pct:.1f}% of available area")
@@ -2547,414 +2595,9 @@ with t5:
     )
     st.plotly_chart(fig_sens, use_container_width=True)
 
-# ==============================================================================
-# 9. EXCEL & PDF EXPORT WITH FALLBACK
-# ==============================================================================
-
-st.markdown("---")
-st.subheader("📄 Export Comprehensive Report")
-
-# Check if libraries are available
-try:
-    import openpyxl
-    EXCEL_AVAILABLE = True
-except ImportError:
-    EXCEL_AVAILABLE = False
-
-try:
-    from reportlab.lib.pagesizes import letter
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib import colors
-    from reportlab.lib.units import inch
-    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
-    PDF_AVAILABLE = True
-except ImportError:
-    PDF_AVAILABLE = False
-
-if not EXCEL_AVAILABLE and not PDF_AVAILABLE:
-    st.warning("⚠️ **Excel and PDF export unavailable.** Install `openpyxl` and/or `reportlab`. CSV export available below.")
-
-if EXCEL_AVAILABLE:
-    @st.cache_data
-    def create_excel_export():
-        output = BytesIO()
-        
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            # Sheet 1: Executive Summary
-            summary_data = {
-                'Parameter': [
-                    'DC Type', 'IT Load (MW)', 'PUE', 'Total DC Load (MW)',
-                    'Avg Load (MW)', 'Peak Load (MW)', 'Capacity Factor (%)',
-                    'Generator Model', 'Generator Type', 'Fleet Config',
-                    'Installed Capacity (MW)', 'Availability Target (%)', 
-                    'Availability Achieved (%)', 'Target Met',
-                    'Operating PUE', 'Strategy', 'Load/Unit (%)', 'Fleet Efficiency (%)',
-                    'Voltage (kV)', 'Primary Fuel', 'Region'
-                ],
-                'Value': [
-                    dc_type, p_it, pue, p_total_dc,
-                    p_total_avg, p_total_peak, capacity_factor*100,
-                    selected_gen, gen_data['type'], f'{n_running}+{n_reserve}',
-                    installed_cap, avail_req, prob_gen*100, 
-                    'Yes' if target_met else 'No',
-                    pue_actual, load_strategy, load_per_unit_pct, fleet_efficiency*100,
-                    rec_voltage_kv, fuel_mode, region
-                ]
-            }
-            pd.DataFrame(summary_data).to_excel(writer, sheet_name='Executive Summary', index=False)
-            
-            # Sheet 2: Financial Summary
-            financial_data = {
-                'Metric': [
-                    'Total CAPEX (M USD)', 'LCOE ($/kWh)', 'LCOE Pre-Tax ($/kWh)',
-                    'Benchmark Price ($/kWh)', 'Gas Price Total ($/MMBtu)',
-                    'Carbon Price ($/ton)', 'Annual Energy (MWh)', 'Effective Hours',
-                    'Fuel Cost/Year (M USD)', 'O&M Cost/Year (M USD)',
-                    'Carbon Cost/Year (M USD)', 'ITC Benefit (M USD)',
-                    'MACRS Benefit (M USD)', 'PTC Annual (M USD)',
-                    'Annual Savings (M USD)', 'NPV 20yr (M USD)',
-                    'Payback (Years)', 'ROI (%)', 'Breakeven Gas ($/MMBtu)'
-                ],
-                'Value': [
-                    total_capex_dynamic, lcoe_dyn, total_annual_cost/(mwh_year*1000),
-                    benchmark_price, total_gas_price,
-                    carbon_price_per_ton, mwh_year, effective_hours,
-                    fuel_cost_year/1e6, om_cost_year/1e6,
-                    carbon_cost_year/1e6, itc_benefit_m,
-                    depreciation_benefit_m, ptc_annual/1e6,
-                    annual_savings/1e6, npv_dyn/1e6,
-                    payback_dyn if annual_savings > 0 else 0, roi_dyn, breakeven_gas_price
-                ]
-            }
-            pd.DataFrame(financial_data).to_excel(writer, sheet_name='Financial Summary', index=False)
-            
-            # Sheet 3: CAPEX
-            edited_capex.to_excel(writer, sheet_name='CAPEX Breakdown', index=False)
-            
-            # Sheet 4: O&M
-            om_data.to_excel(writer, sheet_name='OM Breakdown', index=False)
-            
-            # Sheet 5: Technical
-            tech_data = {
-                'Specification': [
-                    'ISO Rating (MW)', 'Site Rating (MW)', 'Derate Factor',
-                    'ISO Efficiency (%)', 'Fleet Efficiency (%)', 'Ramp Rate (MW/s)',
-                    'MTBF (hours)', 'Step Load (%)', 'Voltage Sag (%)',
-                    'BESS Power (MW)', 'BESS Energy (MWh)', 'Fuel (MMBtu/hr)',
-                    'NOx (lb/hr)', 'CO (lb/hr)', 'CO2 (tons/yr)',
-                    'Footprint', 'Power Density (MW/m²)', 'WUE'
-                ],
-                'Value': [
-                    unit_iso_cap, unit_site_cap, derate_factor_calc,
-                    gen_data['electrical_efficiency']*100, fleet_efficiency*100,
-                    gen_data['ramp_rate_mw_s'], gen_data['mtbf_hours'],
-                    gen_data['step_load_pct'], voltage_sag,
-                    bess_power_total, bess_energy_total, total_fuel_input_mmbtu_hr,
-                    nox_lb_hr, co_lb_hr, co2_ton_yr,
-                    f'{disp_area:.2f} {disp_area_unit}',
-                    gen_data['power_density_mw_per_m2'], wue
-                ]
-            }
-            pd.DataFrame(tech_data).to_excel(writer, sheet_name='Technical Specs', index=False)
-            
-            # Sheet 6: Reliability
-            reliability_data = pd.DataFrame({
-                'Year': years_range,
-                'Availability (%)': [a*100 for a in availability_curve]
-            })
-            reliability_data.to_excel(writer, sheet_name='Reliability Curve', index=False)
-            
-            # Sheet 7: Gas Sensitivity
-            sensitivity_data = pd.DataFrame({
-                'Gas Price ($/MMBtu)': gas_prices_x,
-                'LCOE ($/kWh)': lcoe_y
-            })
-            sensitivity_data.to_excel(writer, sheet_name='Gas Sensitivity', index=False)
-            
-            # Sheet 8: Footprint
-            footprint_data.to_excel(writer, sheet_name='Footprint', index=False)
-            
-            if bess_breakdown:
-                bess_breakdown_data.to_excel(writer, sheet_name='BESS Sizing', index=False)
-        
-        output.seek(0)
-        return output
-    
-    excel_data = create_excel_export()
-    
-    st.download_button(
-        label="📊 Download Complete Excel Report (9 Sheets)",
-        data=excel_data,
-        file_name=f"CAT_QuickSize_v2_{dc_type.replace(' ','_')}_{p_it:.0f}MW_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
-    
-    st.success("✅ Export includes: Executive Summary, Financials, CAPEX, O&M, Technical Specs, Reliability, Sensitivity, Footprint, BESS Sizing")
-
-# PDF Export (independent of Excel)
-if PDF_AVAILABLE:
-    st.markdown("---")
-    
-    @st.cache_data
-    def create_pdf_export():
-        buffer = BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=letter,
-                               topMargin=0.75*inch, bottomMargin=0.75*inch)
-        
-        story = []
-        styles = getSampleStyleSheet()
-        
-        # Custom styles
-        title_style = ParagraphStyle(
-            'CustomTitle',
-            parent=styles['Heading1'],
-            fontSize=24,
-            textColor=colors.HexColor('#1f77b4'),
-            spaceAfter=30,
-            alignment=TA_CENTER
-        )
-        
-        heading_style = ParagraphStyle(
-            'CustomHeading',
-            parent=styles['Heading2'],
-            fontSize=14,
-            textColor=colors.HexColor('#2ca02c'),
-            spaceAfter=12,
-            spaceBefore=12
-        )
-        
-        # Title Page
-        story.append(Paragraph("CAT QuickSize v2.0", title_style))
-        story.append(Paragraph("Data Center Primary Power Solutions", styles['Heading3']))
-        story.append(Spacer(1, 0.3*inch))
-        story.append(Paragraph(f"Project: {dc_type} - {p_it:.0f} MW IT Load", styles['Normal']))
-        story.append(Paragraph(f"Generated: {pd.Timestamp.now().strftime('%B %d, %Y at %H:%M')}", styles['Normal']))
-        story.append(Spacer(1, 0.5*inch))
-        
-        # Executive Summary
-        story.append(Paragraph("Executive Summary", heading_style))
-        
-        summary_table_data = [
-            ['Parameter', 'Value'],
-            ['Data Center Type', dc_type],
-            ['IT Load', f'{p_it:.1f} MW'],
-            ['PUE', f'{pue:.2f}'],
-            ['Total DC Load (Avg/Peak)', f'{p_total_avg:.1f} / {p_total_peak:.1f} MW'],
-            ['Generator Model', selected_gen],
-            ['Fleet Configuration', f'{n_running}+{n_reserve} ({n_total} total units)'],
-            ['Installed Capacity', f'{installed_cap:.1f} MW'],
-            ['Availability Target', f'{avail_req:.3f}%'],
-            ['Availability Achieved', f'{prob_gen*100:.3f}%'],
-            ['Target Met', 'Yes ✓' if target_met else 'No ✗'],
-        ]
-        
-        summary_table = Table(summary_table_data, colWidths=[3.5*inch, 2.5*inch])
-        summary_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 12),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-        ]))
-        
-        story.append(summary_table)
-        story.append(Spacer(1, 0.3*inch))
-        
-        # Technical Configuration
-        story.append(Paragraph("Technical Configuration", heading_style))
-        
-        tech_table_data = [
-            ['Specification', 'Value'],
-            ['Load per Unit', f'{load_per_unit_pct:.1f}%'],
-            ['Fleet Efficiency', f'{fleet_efficiency*100:.1f}%'],
-            ['Operating Strategy', load_strategy],
-            ['BESS Capacity', f'{bess_power_total:.1f} MW / {bess_energy_total:.1f} MWh' if use_bess else 'Not Included'],
-            ['Connection Voltage', f'{rec_voltage_kv} kV'],
-            ['Primary Fuel', fuel_mode],
-            ['PUE (Operating)', f'{pue_actual:.2f}'],
-        ]
-        
-        tech_table = Table(tech_table_data, colWidths=[3.5*inch, 2.5*inch])
-        tech_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-        ]))
-        
-        story.append(tech_table)
-        story.append(PageBreak())
-        
-        # Financial Summary
-        story.append(Paragraph("Financial Summary", heading_style))
-        
-        financial_table_data = [
-            ['Metric', 'Value'],
-            ['Total CAPEX', f'${total_capex_dynamic:.2f}M'],
-            ['LCOE (after tax)', f'${lcoe_dyn:.4f}/kWh'],
-            ['Benchmark Price', f'${benchmark_price:.4f}/kWh'],
-            ['Gas Price (total)', f'${total_gas_price:.2f}/MMBtu'],
-            ['Annual Energy', f'{mwh_year:,.0f} MWh'],
-            ['Annual Fuel Cost', f'${fuel_cost_year/1e6:.2f}M'],
-            ['Annual O&M Cost', f'${om_cost_year/1e6:.2f}M'],
-            ['Annual Savings', f'${annual_savings/1e6:.2f}M'],
-            ['NPV (20 years)', f'${npv_dyn/1e6:.2f}M'],
-            ['Simple Payback', f'{payback_dyn:.1f} years' if annual_savings > 0 else 'N/A'],
-        ]
-        
-        financial_table = Table(financial_table_data, colWidths=[3.5*inch, 2.5*inch])
-        financial_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-        ]))
-        
-        story.append(financial_table)
-        story.append(Spacer(1, 0.3*inch))
-        
-        # CAPEX Breakdown
-        story.append(Paragraph("CAPEX Breakdown", heading_style))
-        
-        capex_table_data = [['Item', 'Cost (M USD)']]
-        for idx, row in edited_capex.iterrows():
-            capex_table_data.append([row['Item'], f"${row['Cost (M USD)']:.2f}M"])
-        capex_table_data.append(['TOTAL', f"${total_capex_dynamic:.2f}M"])
-        
-        capex_table = Table(capex_table_data, colWidths=[3.5*inch, 2.5*inch])
-        capex_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-            ('LINEABOVE', (0, -1), (-1, -1), 2, colors.black),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-        ]))
-        
-        story.append(capex_table)
-        story.append(PageBreak())
-        
-        # Environmental
-        story.append(Paragraph("Environmental Performance", heading_style))
-        
-        env_table_data = [
-            ['Parameter', 'Value'],
-            ['NOx Emissions', f'{nox_lb_hr:.2f} lb/hr'],
-            ['CO Emissions', f'{co_lb_hr:.2f} lb/hr'],
-            ['CO₂ Emissions (Annual)', f'{co2_ton_yr:,.0f} tons/year'],
-            ['Carbon Cost (Annual)', f'${carbon_cost_year/1e6:.2f}M/year'],
-            ['Site Footprint', f'{disp_area:.2f} {disp_area_unit}'],
-            ['Water Use (WUE)', f'{wue:.1f} L/kWh'],
-        ]
-        
-        env_table = Table(env_table_data, colWidths=[3.5*inch, 2.5*inch])
-        env_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-        ]))
-        
-        story.append(env_table)
-        story.append(Spacer(1, 0.5*inch))
-        
-        # Footer
-        story.append(Spacer(1, 0.5*inch))
-        footer_style = ParagraphStyle('Footer', parent=styles['Normal'], 
-                                     fontSize=8, textColor=colors.grey, 
-                                     alignment=TA_CENTER)
-        story.append(Paragraph("CAT QuickSize v2.0 | Caterpillar Electric Power | 2026", footer_style))
-        story.append(Paragraph("For internal use only. Not for redistribution.", footer_style))
-        
-        # Build PDF
-        doc.build(story)
-        buffer.seek(0)
-        return buffer
-    
-    pdf_data = create_pdf_export()
-    
-    col_pdf1, col_pdf2 = st.columns(2)
-    
-    with col_pdf1:
-        st.download_button(
-            label="📄 Download PDF Proposal (4 Pages)",
-            data=pdf_data,
-            file_name=f"CAT_Proposal_{dc_type.replace(' ','_')}_{p_it:.0f}MW_{pd.Timestamp.now().strftime('%Y%m%d')}.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
-    
-    with col_pdf2:
-        st.info("📄 **PDF Includes:** Executive Summary, Technical Config, Financials, CAPEX, Environmental")
-
-# CSV Fallback (if no Excel available)
-if not EXCEL_AVAILABLE:
-    # Fallback: CSV exports
-    st.info("💡 **CSV Export Mode:** Multiple files available for download")
-    
-    col_csv1, col_csv2, col_csv3 = st.columns(3)
-    
-    # CSV 1: Summary
-    with col_csv1:
-        summary_csv = pd.DataFrame({
-            'Parameter': ['DC Type', 'IT Load MW', 'PUE', 'Generator', 'Fleet', 'Installed MW', 
-                         'Availability %', 'Target Met', 'LCOE $/kWh', 'CAPEX $M', 'NPV $M'],
-            'Value': [dc_type, p_it, pue, selected_gen, f'{n_running}+{n_reserve}', installed_cap, 
-                     prob_gen*100, 'Yes' if target_met else 'No', lcoe_dyn, total_capex_dynamic, npv_dyn/1e6]
-        })
-        
-        st.download_button(
-            label="📋 Summary (CSV)",
-            data=summary_csv.to_csv(index=False),
-            file_name=f"Summary_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
-    
-    # CSV 2: Financial
-    with col_csv2:
-        financial_csv = pd.DataFrame({
-            'Metric': ['CAPEX M$', 'LCOE $/kWh', 'Gas Price $/MMBtu', 'Annual Savings M$', 'NPV M$', 'Payback Years'],
-            'Value': [total_capex_dynamic, lcoe_dyn, total_gas_price, annual_savings/1e6, npv_dyn/1e6, 
-                     payback_dyn if annual_savings > 0 else 0]
-        })
-        
-        st.download_button(
-            label="💰 Financial (CSV)",
-            data=financial_csv.to_csv(index=False),
-            file_name=f"Financial_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
-    
-    # CSV 3: Technical
-    with col_csv3:
-        tech_csv = pd.DataFrame({
-            'Spec': ['ISO MW', 'Site MW', 'Efficiency %', 'MTBF hrs', 'BESS MW', 'Footprint'],
-            'Value': [unit_iso_cap, unit_site_cap, fleet_efficiency*100, gen_data['mtbf_hours'], 
-                     bess_power_total, f'{disp_area:.2f} {disp_area_unit}']
-        })
-        
-        st.download_button(
-            label="⚙️ Technical (CSV)",
-            data=tech_csv.to_csv(index=False),
-            file_name=f"Technical_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
-    
-    st.caption("💡 **Tip:** Install openpyxl (`pip install openpyxl`) for full Excel report with 9 sheets")
-
 # --- FOOTER ---
 st.markdown("---")
 col_foot1, col_foot2, col_foot3 = st.columns(3)
-col_foot1.caption("CAT QuickSize v2.0 Lite")
+col_foot1.caption("CAT QuickSize v2.0 Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
