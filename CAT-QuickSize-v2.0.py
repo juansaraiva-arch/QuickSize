@@ -294,7 +294,6 @@ def calculate_bess_requirements(p_net_req_avg, p_net_req_peak, step_load_req,
     bess_peak_shaving = p_net_req_peak - p_net_req_avg
     
     # Component 3: Ramp Rate Support
-    load_change_rate = 5.0  # MW/s (AI workload aggressive)
     bess_ramp_support = max(0, (load_change_rate - gen_ramp_rate) * 10)  # 10s buffer
     
     # Component 4: Frequency Regulation
@@ -648,26 +647,31 @@ with st.sidebar:
         "AI Factory (Training)": {
             "capacity_factor": 0.96,
             "peak_avg_ratio": 1.08,
+            "ramp_rate": 5.0,  # Agresivo (Checkpointing)
             "description": "Continuous 24/7 training runs"
         },
         "AI Factory (Inference)": {
             "capacity_factor": 0.85,
             "peak_avg_ratio": 1.25,
+            "ramp_rate": 3.0,  # Variable
             "description": "Variable inference loads with peaks"
         },
         "Hyperscale Standard": {
             "capacity_factor": 0.75,
             "peak_avg_ratio": 1.20,
+            "ramp_rate": 1.5,  # Estándar
             "description": "Mixed workloads, diurnal patterns"
         },
         "Colocation": {
             "capacity_factor": 0.65,
             "peak_avg_ratio": 1.35,
+            "ramp_rate": 1.0,  # Bajo (Convencional)
             "description": "Multi-tenant, business hours peaks"
         },
         "Edge Computing": {
             "capacity_factor": 0.50,
             "peak_avg_ratio": 1.50,
+            "ramp_rate": 2.0,  # Volátil
             "description": "Highly variable local demand"
         }
     }
@@ -689,6 +693,16 @@ with st.sidebar:
         profile["peak_avg_ratio"], 
         0.05
     )
+    
+    # --- NUEVO INPUT AGREGADO AQUÍ ---
+    load_ramp_req = st.number_input(
+        "Load Ramp Rate Req (MW/s)", 
+        0.1, 10.0, 
+        profile["ramp_rate"], # Valor por defecto dinámico según el DC Type
+        0.1,
+        help="How fast the load changes. AI = 3-5 MW/s, Colo = 0.5-1 MW/s. Determines BESS power for stability."
+    )
+    # ---------------------------------
     
     # Calculate loads
     p_total_avg = p_total_dc * capacity_factor
@@ -1090,6 +1104,8 @@ if use_bess:
     bess_power_transient, bess_energy_transient, bess_breakdown_transient = calculate_bess_requirements(
         p_total_avg, p_total_peak, step_load_req,
         gen_data["ramp_rate_mw_s"], gen_data["step_load_pct"],
+        load_ramp_req,
+        load_ramp_req,
         enable_black_start
     )
 
