@@ -1244,7 +1244,6 @@ if use_bess and bess_reliability_enabled:
                 print(f"[DEBUG] Config C: Avail without BESS={avg_avail*100:.4f}%, with BESS boost={avg_avail_with_bess*100:.4f}%", file=sys.stderr)
                 
                 if avg_avail_with_bess >= avail_decimal:
-                if avg_avail_with_bess >= avail_decimal:
                     load_pct_c = (p_total_avg / (n_run * unit_site_cap)) * 100
                     eff_c = get_part_load_efficiency(
                         gen_data["electrical_efficiency"],
