@@ -745,34 +745,57 @@ with st.sidebar:
             manual_voltage_kv = voltage_map[voltage_option]
             st.caption(f"✅ Selected: {manual_voltage_kv} kV")
     
+  # ==============================================================================
+    # SITE ENVIRONMENT (CORRECTED UNIT HANDLING)
+    # ==============================================================================
     st.markdown("🌍 **Site Environment**")
     derate_mode = st.radio("Derate Mode", ["Auto-Calculate", "Manual"], horizontal=True)
     
     if derate_mode == "Auto-Calculate":
         c_env1, c_env2 = st.columns(2)
+        
+        # 1. Manejo de Temperatura (Input y Conversión)
         if is_imperial:
             site_temp_f = c_env1.number_input(f"Ambient Temp ({u_temp})", 32, 130, 77)
-            site_temp_c = (site_temp_f - 32) * 5/9
+            site_temp_c = (site_temp_f - 32) * 5/9  # Convertir a Celsius para la fórmula
         else:
             site_temp_c = c_env1.number_input(f"Ambient Temp ({u_temp})", 0, 55, 25)
         
+        # 2. Manejo de Altitud (Input y Conversión)
         if is_imperial:
             site_alt_ft = c_env2.number_input(f"Altitude ({u_dist})", 0, 15000, 0, step=100)
-            site_alt_m = site_alt_ft * 0.3048
+            site_alt_m = site_alt_ft * 0.3048  # Convertir a Metros para la fórmula
         else:
             site_alt_m = c_env2.number_input(f"Altitude ({u_dist})", 0, 4500, 0, step=50)
-        
+            
         methane_number = st.slider("Gas Methane Number", 50, 100, 80)
         
+        # --- CÁLCULO DE DERATEO (Fórmulas Físicas Correctas) ---
+        
+        # Temperatura: 1% de pérdida por cada 1°C arriba de 25°C (Estándar ISO)
+        # Si temp < 25, el factor es 0 (no hay ganancia ni pérdida, o ganancia marginal ignorada)
         temp_derate = 1.0 - max(0, (site_temp_c - 25) * 0.01)
-        alt_derate = 1.0 - (site_alt_m / 300)
+        
+        # Altura: Aprox 1% por cada 100m sobre 100m del nivel del mar (Motores Turbo Gas)
+        # Fórmula segura: 1 - (Altitud en m * 0.0001)
+        # Nota: 4000m * 0.0001 = 0.4 -> Factor 0.6 (60% capacidad). Correcto.
+        alt_derate = 1.0 - (site_alt_m * 0.0001)
+        
+        # Calidad de Combustible (MN)
         fuel_derate = 1.0 if methane_number >= 70 else 0.95
-        derate_factor_calc = temp_derate * alt_derate * fuel_derate
+        
+        # Factor Total Combinado
+        # Usamos max(0.1, ...) para evitar que un error de input genere capacidad 0 o negativa
+        derate_factor_calc = max(0.1, temp_derate * alt_derate * fuel_derate)
+        
+        # Mostrar el resultado para validación visual
+        st.info(f"📉 **Derate Factor:** {derate_factor_calc:.3f} (Temp: {temp_derate:.2f} × Alt: {alt_derate:.2f} × Fuel: {fuel_derate:.2f})")
+        # -----------------------
+        
     else:
-        derate_factor_calc = st.slider("Manual Derate Factor", 0.5, 1.0, 0.9, 0.01)
-        site_temp_c = 25
+        derate_factor_calc = st.slider("Manual Derate Factor", 0.1, 1.0, 0.9, 0.01)
+        site_temp_c = 25 # Default para cálculos de eficiencia si es manual
         site_alt_m = 0
-        methane_number = 80
 
     # -------------------------------------------------------------------------
     # GROUP 2: TECHNOLOGY SOLUTION
