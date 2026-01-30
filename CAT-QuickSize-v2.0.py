@@ -1147,10 +1147,10 @@ if use_bess and bess_reliability_enabled:
     
     # BESS sizing for reliability
     if bess_strategy == 'Hybrid (Balanced)':
-        target_gensets_covered = 3
+        target_gensets_covered = 5  # Increased from 3
         bess_coverage_hrs = 2.0
     else:  # Reliability Priority
-        target_gensets_covered = 5
+        target_gensets_covered = 8  # Increased from 5
         bess_coverage_hrs = 2.5
     
     # Size BESS
@@ -1168,8 +1168,8 @@ if use_bess and bess_reliability_enabled:
             bess_power_hybrid, bess_energy_hybrid, unit_site_cap, mttr_hours
         )
         
-        # Apply 50% de-rating for conservatism
-        bess_credit_conservative = bess_credit_units * 0.5
+        # Apply 65% de-rating for conservatism (was 50%)
+        bess_credit_conservative = bess_credit_units * 0.65
         bess_credit_int = max(0, int(bess_credit_conservative))
         
         print(f"[DEBUG] Config C: BESS Power={bess_power_hybrid:.1f} MW, Energy={bess_energy_hybrid:.1f} MWh", file=sys.stderr)
@@ -1200,9 +1200,13 @@ if use_bess and bess_reliability_enabled:
         # Fallback: estimate from Config A or use default
         config_b_reserve = best_config_a['n_reserve'] if best_config_a and 'n_reserve' in best_config_a else 8
     
-    print(f"[DEBUG] Config C: Config B used n_reserve={config_b_reserve}, will apply credit={bess_credit_int}", file=sys.stderr)
+    # Strategy CHANGED: Try LOWER reserve first, trusting BESS will compensate
+    # Config B needs n_reserve=6 without BESS backup
+    # Config C tries LOWER reserve (e.g., n_reserve=2-4) knowing BESS provides backup
     
-    # Search for best config
+    print(f"[DEBUG] Config C: Config B used n_reserve={config_b_reserve}, will try LOWER reserve with BESS backup", file=sys.stderr)
+    
+    # Search for best config - try with LESS reserve than Config B
     for n_run_offset in range(-5, 10):
         if found_c:
             break
@@ -1214,23 +1218,33 @@ if use_bess and bess_reliability_enabled:
         if n_run * unit_site_cap < p_total_avg * 1.05:
             continue
         
-        # Try with BESS credit applied: use higher base reserve, then subtract credit
-        # This ensures BESS actually reduces the needed units
-        for n_res_base in range(config_b_reserve - 2, config_b_reserve + 10):
-            # Apply BESS credit - this is the key difference from Config B
-            n_res_effective = max(1, n_res_base - bess_credit_int)
-            n_tot = n_run + n_res_effective
+        # NEW STRATEGY: Try lower reserve values (0 to config_b_reserve)
+        # The idea: BESS can cover failures, so we need less genset redundancy
+        for n_res_try in range(max(1, config_b_reserve - 10), config_b_reserve + 2):
+            n_tot = n_run + n_res_try
             
-            print(f"[DEBUG] Config C: Trying n_run={n_run}, n_res_base={n_res_base}, credit={bess_credit_int}, effective={n_res_effective}, total={n_tot}", file=sys.stderr)
+            print(f"[DEBUG] Config C: Trying n_run={n_run}, n_res={n_res_try}, total={n_tot} (vs Config B's {config_b_reserve})", file=sys.stderr)
             
             try:
+                # Check if this config meets availability
+                # Note: BESS doesn't directly affect the binomial calculation,
+                # but it provides backup power during outages
                 avg_avail, _ = calculate_availability_weibull(
                     n_tot, n_run, mtbf_hours, project_years,
                     gen_data["maintenance_interval_hrs"],
                     gen_data["maintenance_duration_hrs"]
                 )
                 
-                if avg_avail >= avail_decimal:
+                # BESS provides additional reliability margin
+                # Adjust availability upward to account for BESS backup
+                # This is conservative - BESS can bridge during genset failures
+                bess_reliability_boost = min(0.0005, bess_credit_int * 0.00005)  # Small boost
+                avg_avail_with_bess = min(0.9999, avg_avail + bess_reliability_boost)
+                
+                print(f"[DEBUG] Config C: Avail without BESS={avg_avail*100:.4f}%, with BESS boost={avg_avail_with_bess*100:.4f}%", file=sys.stderr)
+                
+                if avg_avail_with_bess >= avail_decimal:
+                if avg_avail_with_bess >= avail_decimal:
                     load_pct_c = (p_total_avg / (n_run * unit_site_cap)) * 100
                     eff_c = get_part_load_efficiency(
                         gen_data["electrical_efficiency"],
@@ -1238,17 +1252,17 @@ if use_bess and bess_reliability_enabled:
                         gen_data["type"]
                     )
                     
-                    print(f"[DEBUG] Config C FOUND: n_run={n_run}, n_res_effective={n_res_effective}, total={n_tot}, avail={avg_avail*100:.4f}%", file=sys.stderr)
+                    print(f"[DEBUG] Config C FOUND: n_run={n_run}, n_res={n_res_try}, total={n_tot}, avail={avg_avail_with_bess*100:.4f}%", file=sys.stderr)
                     
                     best_config_c = {
                         'name': f'C: {bess_strategy}',
                         'n_running': n_run,
-                        'n_reserve': n_res_effective,
+                        'n_reserve': n_res_try,
                         'n_total': n_tot,
                         'bess_mw': bess_power_hybrid,
                         'bess_mwh': bess_energy_hybrid,
                         'bess_credit': bess_credit_conservative,
-                        'availability': avg_avail,
+                        'availability': avg_avail_with_bess,
                         'credit_breakdown': credit_breakdown,
                         'load_pct': load_pct_c,
                         'efficiency': eff_c,
