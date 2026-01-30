@@ -699,7 +699,7 @@ with st.sidebar:
             f"- Effective Hours/Year: **{8760*capacity_factor:.0f} hrs**")
     
     avail_req = st.number_input("Required Availability (%)", 90.0, 99.99999, 99.99, format="%.5f")
-    step_load_req = st.number_input("Spinning Reserve Req (%)", 0.0, 100.0, def_step_load,
+    step_load_req = st.number_input("Step Load (%)", 0.0, 100.0, def_step_load,
                                     help="Spinning reserve = extra capacity to handle sudden load increases or generator trips")
     
     # ===== NEW: FOOTPRINT CONSTRAINTS =====
