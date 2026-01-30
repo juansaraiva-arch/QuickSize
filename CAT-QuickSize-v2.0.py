@@ -1007,7 +1007,8 @@ for n_run in range(search_min_a, search_max_a):
                 'bess_mw': 0,
                 'bess_mwh': 0,
                 'bess_credit': 0,
-                'availability': avg_avail
+                'availability': avg_avail,
+                'load_pct': load_pct_a  # NEW: Add pre-calculated load for table
             }
             break
     if best_config_a:
@@ -1024,8 +1025,12 @@ if not best_config_a:
     
     # Calculate ACTUAL availability for fallback (not hardcoded 95%)
     fallback_avail, _ = calculate_availability_weibull(
-        fallback_n_tot, fallback_n_run, mtbf_hours, project_years
+        fallback_n_tot, fallback_n_run, mtbf_hours, project_years,
+        gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"]
     )
+    
+    # Calculate load for peak
+    fallback_load_pct = (p_total_peak / (fallback_n_run * unit_site_cap)) * 100
     
     best_config_a = {
         'name': 'A: No BESS',
@@ -1035,7 +1040,8 @@ if not best_config_a:
         'bess_mw': 0,
         'bess_mwh': 0,
         'bess_credit': 0,
-        'availability': fallback_avail
+        'availability': fallback_avail,
+        'load_pct': fallback_load_pct
     }
 
 reliability_configs.append(best_config_a)
