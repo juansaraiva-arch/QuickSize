@@ -1051,29 +1051,24 @@ if use_bess:
     # Debug logging
     import sys
     print(f"[DEBUG] Config B: Starting calculation", file=sys.stderr)
-    print(f"[DEBUG] p_total_avg={p_total_avg}, unit_site_cap={unit_site_cap}", file=sys.stderr)
+    print(f"[DEBUG] p_total_avg={p_total_avg}, p_total_peak={p_total_peak}, unit_site_cap={unit_site_cap}", file=sys.stderr)
     
-    # With BESS for peak shaving, optimize n_running for efficiency
-    # Target: 70-76% load per unit (sweet spot)
+    # With BESS for peak shaving, size for AVERAGE load (not efficiency target)
+    # BESS will cover the peak difference
     
-    # Calculate optimal n_running for 72% target load
-    target_load_optimal = 0.72
-    n_running_for_efficiency = p_total_avg / (unit_site_cap * target_load_optimal)
-    n_running_optimal_b = int(round(n_running_for_efficiency))
-    
-    print(f"[DEBUG] Config B: n_running_optimal_b={n_running_optimal_b}", file=sys.stderr)
-    
-    # Ensure we have enough capacity (minimum 105% of average)
+    # Minimum n_running to cover average load + small margin
     n_running_min_b = int(math.ceil(p_total_avg * 1.05 / unit_site_cap))
-    n_running_optimal_b = max(n_running_optimal_b, n_running_min_b)
     
-    print(f"[DEBUG] Config B: After capacity check, n_running_optimal_b={n_running_optimal_b}", file=sys.stderr)
+    # Don't over-size for efficiency - let it fall where it falls
+    n_running_optimal_b = n_running_min_b
+    
+    print(f"[DEBUG] Config B: n_running for avg+5%: {n_running_optimal_b}", file=sys.stderr)
     
     best_config_b = None
     found_b = False
     
-    # Search around optimal point (±5 units)
-    for n_run_offset in range(-5, 10):
+    # Search around this point (±3 units for flexibility)
+    for n_run_offset in range(-3, 6):
         if found_b:
             break
         
@@ -1156,13 +1151,11 @@ if use_bess:
 if use_bess and bess_reliability_enabled:
     print(f"[DEBUG] Config C: Starting calculation", file=sys.stderr)
     
-    # Start with same efficiency optimization as Config B
-    target_load_optimal = 0.72
-    n_running_for_efficiency = p_total_avg / (unit_site_cap * target_load_optimal)
-    n_running_optimal_c = int(round(n_running_for_efficiency))
-    
+    # Start with same capacity-based sizing as Config B
     n_running_min_c = int(math.ceil(p_total_avg * 1.05 / unit_site_cap))
-    n_running_optimal_c = max(n_running_optimal_c, n_running_min_c)
+    n_running_optimal_c = n_running_min_c
+    
+    print(f"[DEBUG] Config C: n_running for avg+5%: {n_running_optimal_c}", file=sys.stderr)
     
     # BESS sizing for reliability
     if bess_strategy == 'Hybrid (Balanced)':
