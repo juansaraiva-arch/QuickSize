@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import math
+import sys
 import plotly.express as px
 import plotly.graph_objects as go
 from io import BytesIO
@@ -968,16 +969,21 @@ if use_bess:
 reliability_configs = []
 
 # Configuration A: No BESS (Baseline)
-config_a_running = n_running_from_load
-# Expand search range - be more generous
-search_min_a = max(1, int(config_a_running * 0.8))  # Down to 80% of load-optimal
-search_max_a = int(config_a_running * 2.0)  # Up to 2x load-optimal
+# Config A must size for PEAK load without any BESS assistance
+n_running_for_peak = int(math.ceil(p_total_peak / unit_site_cap))
+config_a_running = max(n_running_for_peak, int(math.ceil(p_total_peak * 1.05 / unit_site_cap)))
+
+print(f"[DEBUG] Config A: Sizing for peak={p_total_peak} MW, n_running={config_a_running}", file=sys.stderr)
+
+# Expand search range
+search_min_a = max(1, int(config_a_running * 0.95))  # Down to 95% 
+search_max_a = int(config_a_running * 1.2)  # Up to 120%
 
 best_config_a = None
 
 # Search exhaustively for Config A
 for n_run in range(search_min_a, search_max_a):
-    # Config A: NO BESS - must ALWAYS cover PEAK load
+    # Config A: NO BESS - must cover PEAK load always
     capacity_min_a = p_total_peak
     if n_run * unit_site_cap < capacity_min_a:
         continue
@@ -988,6 +994,11 @@ for n_run in range(search_min_a, search_max_a):
         avg_avail, _ = calculate_availability_weibull(n_tot, n_run, mtbf_hours, project_years, gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"])
         
         if avg_avail >= avail_decimal:
+            # Calculate load per unit for Config A
+            load_pct_a = (p_total_peak / (n_run * unit_site_cap)) * 100
+            
+            print(f"[DEBUG] Config A FOUND: n_run={n_run}, n_res={n_res}, total={n_tot}, load={load_pct_a:.1f}%, avail={avg_avail*100:.4f}%", file=sys.stderr)
+            
             best_config_a = {
                 'name': 'A: No BESS',
                 'n_running': n_run,
@@ -1005,9 +1016,11 @@ for n_run in range(search_min_a, search_max_a):
 # If still not found, create fallback with CORRECT availability calculation
 if not best_config_a:
     # Fallback: size for peak load
-    fallback_n_run = int(p_total_peak / unit_site_cap) + 1
+    fallback_n_run = config_a_running
     fallback_n_res = 14
     fallback_n_tot = fallback_n_run + fallback_n_res
+    
+    print(f"[DEBUG] Config A: Using fallback with n_run={fallback_n_run}, n_res={fallback_n_res}", file=sys.stderr)
     
     # Calculate ACTUAL availability for fallback (not hardcoded 95%)
     fallback_avail, _ = calculate_availability_weibull(
