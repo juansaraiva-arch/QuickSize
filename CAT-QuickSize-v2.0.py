@@ -1029,6 +1029,11 @@ reliability_configs.append(best_config_a)
 
 # Configuration B: BESS Transient Only
 if use_bess:
+    # Debug logging
+    import sys
+    print(f"[DEBUG] Config B: Starting calculation", file=sys.stderr)
+    print(f"[DEBUG] p_total_avg={p_total_avg}, unit_site_cap={unit_site_cap}", file=sys.stderr)
+    
     # With BESS for peak shaving, optimize n_running for efficiency
     # Target: 70-76% load per unit (sweet spot)
     
@@ -1037,9 +1042,13 @@ if use_bess:
     n_running_for_efficiency = p_total_avg / (unit_site_cap * target_load_optimal)
     n_running_optimal_b = int(round(n_running_for_efficiency))
     
+    print(f"[DEBUG] Config B: n_running_optimal_b={n_running_optimal_b}", file=sys.stderr)
+    
     # Ensure we have enough capacity (minimum 105% of average)
     n_running_min_b = int(math.ceil(p_total_avg * 1.05 / unit_site_cap))
     n_running_optimal_b = max(n_running_optimal_b, n_running_min_b)
+    
+    print(f"[DEBUG] Config B: After capacity check, n_running_optimal_b={n_running_optimal_b}", file=sys.stderr)
     
     best_config_b = None
     found_b = False
@@ -1076,6 +1085,8 @@ if use_bess:
                         load_pct_b,
                         gen_data["type"]
                     )
+                    
+                    print(f"[DEBUG] Config B FOUND: n_run={n_run}, n_res={n_res}, load={load_pct_b:.1f}%, eff={eff_b*100:.1f}%", file=sys.stderr)
                     
                     best_config_b = {
                         'name': 'B: BESS Transient',
@@ -1124,6 +1135,8 @@ if use_bess:
 
 # Configuration C: BESS Hybrid (Balanced)
 if use_bess and bess_reliability_enabled:
+    print(f"[DEBUG] Config C: Starting calculation", file=sys.stderr)
+    
     # Start with same efficiency optimization as Config B
     target_load_optimal = 0.72
     n_running_for_efficiency = p_total_avg / (unit_site_cap * target_load_optimal)
@@ -1158,6 +1171,9 @@ if use_bess and bess_reliability_enabled:
         # Apply 50% de-rating for conservatism
         bess_credit_conservative = bess_credit_units * 0.5
         bess_credit_int = max(0, int(bess_credit_conservative))
+        
+        print(f"[DEBUG] Config C: BESS Power={bess_power_hybrid:.1f} MW, Energy={bess_energy_hybrid:.1f} MWh", file=sys.stderr)
+        print(f"[DEBUG] Config C: BESS Credit raw={bess_credit_units:.2f}, conservative={bess_credit_conservative:.2f}, int={bess_credit_int}", file=sys.stderr)
         
         # Show debug info
         st.sidebar.markdown("---")
