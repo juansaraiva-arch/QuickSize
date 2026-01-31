@@ -2118,9 +2118,17 @@ with t2:
         # Build comparison table with spinning reserve info
         comparison_data = []
         for config in reliability_configs:
-            # Calculate CAPEX
-            genset_capex = config['n_total'] * unit_site_cap * gen_data['est_cost_kw'] / 1000
-            bess_capex = config['bess_mwh'] * 0.3
+            # Calculate CAPEX (CORREGIDO: Incluye Instalación y BOP)
+            # Costo Unitario Total = Equipo + Instalación
+            unit_total_cost_kw = gen_data['est_cost_kw'] + gen_data['est_install_kw']
+            
+            genset_capex = config['n_total'] * unit_site_cap * unit_total_cost_kw / 1000
+            
+            # BESS Capex: Potencia ($250/kW) + Energía ($400/kWh)
+            bess_cost_kw = 250.0
+            bess_cost_kwh = 400.0
+            bess_capex = (config['bess_mw'] * 1000 * bess_cost_kw + config['bess_mwh'] * 1000 * bess_cost_kwh) / 1e6
+            
             total_capex = genset_capex + bess_capex
             
             # Calculate O&M/year
@@ -2582,6 +2590,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT QuickSize v2.0 Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
