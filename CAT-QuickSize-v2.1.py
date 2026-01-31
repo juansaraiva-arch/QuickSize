@@ -2025,7 +2025,7 @@ with t1:
     col_sr1.metric(
         "Spinning Reserve Required",
         f"{selected_config.get('spinning_reserve_mw', spinning_reserve_mw):.1f} MW",
-        f"{step_load_req:.0f}% of avg load"
+        f"{spinning_res_pct:.0f}% of avg load"  # <--- CORREGIDO (Usa la variable de política)
     )
     
     col_sr2.metric(
@@ -2367,7 +2367,8 @@ with t2:
     st.markdown("### 🔋 Step Load Capability & BESS Analysis")
     
     col_s1, col_s2, col_s3 = st.columns(3)
-    col_s1.metric("Required Step Load", f"{step_load_req:.0f}%")
+    # Usamos load_step_pct porque aquí hablamos del GOLPE FÍSICO
+    col_s1.metric("Max Load Step", f"{load_step_pct:.0f}%")
     col_s2.metric("Gen Capability", f"{gen_data['step_load_pct']:.0f}%")
     
     step_capable = gen_data["step_load_pct"] >= step_load_req
@@ -2747,6 +2748,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
