@@ -1534,12 +1534,41 @@ elif load_strategy == "Spinning Reserve (N+1)":
 else:
     units_running = n_running
 
-# Fleet efficiency at operating point
-fleet_efficiency = get_part_load_efficiency(
+# ==============================================================================
+# CORRECCIÓN DE EFICIENCIA POR SITIO (NUEVO PARCHE)
+# ==============================================================================
+
+# 1. Factor por Calidad de Gas (Methane Number)
+# Si MN < 70, el motor retrasa el encendido (Timing), perdiendo eficiencia drásticamente.
+if methane_number < 70:
+    eff_fuel_factor = 0.94  # Pierde ~6% de eficiencia relativa
+elif methane_number < 80:
+    eff_fuel_factor = 0.98  # Pierde ~2%
+else:
+    eff_fuel_factor = 1.0
+
+# 2. Factor por Altitud Extrema
+# Sobre 2000m, el turbo trabaja fuera de rango óptimo, aumentando bombeo y calor.
+if site_alt_m > 2000:
+    # Pierde 0.5% relativo por cada 1000m adicionales sobre 2000m
+    eff_alt_factor = 1.0 - ((site_alt_m - 2000) / 1000) * 0.005
+else:
+    eff_alt_factor = 1.0
+
+# Factor Total de Corrección de Eficiencia
+site_efficiency_correction = eff_fuel_factor * eff_alt_factor
+
+# Cálculo Base (Interpolación de Carga - Curva ISO)
+base_fleet_eff = get_part_load_efficiency(
     gen_data["electrical_efficiency"],
     load_per_unit_pct,
     gen_data["type"]
 )
+
+# Aplicar Corrección de Sitio a la eficiencia final
+fleet_efficiency = base_fleet_eff * site_efficiency_correction
+
+# ==============================================================================
 
 # Voltage recommendation (adjusted for off-grid data centers)
 if volt_mode == "Auto-Recommend":
@@ -2550,6 +2579,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT QuickSize v2.0 Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
