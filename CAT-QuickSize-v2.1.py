@@ -746,20 +746,32 @@ with st.sidebar:
             site_temp_f = c_env1.number_input(f"Ambient Temp ({u_temp})", 32, 130, 77)
             site_temp_c = (site_temp_f - 32) * 5/9
         else:
-            site_temp_c = c_env1.number_input(f"Ambient Temp ({u_temp})", 0, 55, 25)
+            site_temp_c = c_env1.number_input(f"Ambient Temp ({u_temp})", 0, 55, 45) # <--- Default ajustado para prueba
         
         if is_imperial:
             site_alt_ft = c_env2.number_input(f"Altitude ({u_dist})", 0, 15000, 0, step=100)
             site_alt_m = site_alt_ft * 0.3048
         else:
-            site_alt_m = c_env2.number_input(f"Altitude ({u_dist})", 0, 4500, 0, step=50)
+            site_alt_m = c_env2.number_input(f"Altitude ({u_dist})", 0, 5000, 4000, step=50) # <--- Rango ampliado a 5000m
         
         methane_number = st.slider("Gas Methane Number", 50, 100, 80)
         
+        # --- CORRECCIÓN MATEMÁTICA ---
+        # 1. Temperatura: 1% por cada 1°C arriba de 25°C
         temp_derate = 1.0 - max(0, (site_temp_c - 25) * 0.01)
-        alt_derate = 1.0 - (site_alt_m / 300)
+        
+        # 2. Altitud: 1% por cada 100 metros (0.0001 por metro)
+        # ANTES (ERROR): alt_derate = 1.0 - (site_alt_m / 300) 
+        alt_derate = 1.0 - (site_alt_m * 0.0001)
+        
+        # 3. Combustible
         fuel_derate = 1.0 if methane_number >= 70 else 0.95
-        derate_factor_calc = temp_derate * alt_derate * fuel_derate
+        
+        # 4. CÁLCULO FINAL SEGURO
+        # Usamos max(0.1, ...) para asegurar que NUNCA sea 0 o negativo, 
+        # incluso si alguien pone 15,000 metros de altura.
+        derate_factor_calc = max(0.1, temp_derate * alt_derate * fuel_derate)
+        # -----------------------------
     else:
         derate_factor_calc = st.slider("Manual Derate Factor", 0.5, 1.0, 0.9, 0.01)
         site_temp_c = 25
@@ -2544,4 +2556,5 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT QuickSize v2.0 Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
