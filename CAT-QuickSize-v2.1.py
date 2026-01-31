@@ -1108,9 +1108,9 @@ spinning_from_bess = spinning_reserve_result['spinning_from_bess']
 # ENHANCED FLEET OPTIMIZATION - AVAILABILITY-DRIVEN WITH BESS CREDIT
 # ============================================================================
 
-# Step 1: Calculate MINIMUM n_running based on load AND spinning reserve requirements
+# Step 1: Calculate MINIMUM n_running (Usamos el GOLPE FÍSICO para validar respuesta)
 n_running_from_load, fleet_options = optimize_fleet_size(
-    p_total_avg, p_total_peak, unit_site_cap, step_load_req, gen_data, use_bess
+    p_total_avg, p_total_peak, unit_site_cap, load_step_pct, gen_data, use_bess
 )
 
 # Use the MAXIMUM of spinning reserve calculation and optimization
@@ -2747,6 +2747,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
