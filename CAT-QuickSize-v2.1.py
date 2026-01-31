@@ -2371,7 +2371,8 @@ with t2:
     col_s1.metric("Max Load Step", f"{load_step_pct:.0f}%")
     col_s2.metric("Gen Capability", f"{gen_data['step_load_pct']:.0f}%")
     
-    step_capable = gen_data["step_load_pct"] >= step_load_req
+    # Usamos load_step_pct porque comparamos capacidad FÍSICA
+    step_capable = gen_data["step_load_pct"] >= load_step_pct
     if step_capable:
         col_s3.success("✅ COMPLIANT")
     elif use_bess:
@@ -2748,6 +2749,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
