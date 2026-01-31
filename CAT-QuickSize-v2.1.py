@@ -811,10 +811,9 @@ with st.sidebar:
     enable_black_start = st.checkbox("Enable Black Start Capability", value=False)
     
     include_chp = st.checkbox("Include Tri-Generation (CHP)", value=False)
-    if include_chp:
-        cooling_method = "Absorption Chiller"
-    else:
-        cooling_method = st.selectbox("Cooling Method", ["Air-Cooled", "Water-Cooled"])
+    
+    # Allow manual selection even with CHP (to test engineering logic)
+    cooling_method = st.selectbox("Cooling Method", ["Air-Cooled", "Water-Cooled"])
     
     st.markdown("⛽ **Fuel Infrastructure**")
     fuel_mode = st.radio("Primary Fuel", ["Pipeline Gas", "LNG", "Dual-Fuel"], horizontal=True)
@@ -2726,6 +2725,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
