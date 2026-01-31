@@ -1120,11 +1120,14 @@ spinning_no_bess = calculate_spinning_reserve_units(
 )
 
 # Config A: Use the calculated n_running directly from spinning reserve function
-# This already accounts for: Avg Load + Spinning Reserve headroom
-n_running_no_bess = spinning_no_bess['n_units_running']
-load_pct_no_bess = spinning_no_bess['load_per_unit_pct']
+# FIX: Ensure we also cover PEAK load (which might be higher than Avg + Spinning)
+n_running_peak = math.ceil(p_total_peak / unit_site_cap)
+n_running_no_bess = max(spinning_no_bess['n_units_running'], n_running_peak)
 
-print(f"[DEBUG] Config A: n_running={n_running_no_bess}, load={load_pct_no_bess:.1f}%, spinning_reserve={spinning_no_bess['spinning_reserve_mw']:.1f} MW", file=sys.stderr)
+# Recalculate load pct based on the final n_running (Critical step!)
+load_pct_no_bess = (p_total_avg / (n_running_no_bess * unit_site_cap)) * 100
+
+print(f"[DEBUG] Config A: n_running={n_running_no_bess} (Peak req: {n_running_peak}), load={load_pct_no_bess:.1f}%", file=sys.stderr)
 
 # Find minimum reserve units (N+X) needed for availability target
 best_config_a = None
@@ -2579,6 +2582,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT QuickSize v2.0 Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
