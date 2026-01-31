@@ -6,6 +6,7 @@ import sys
 import plotly.express as px
 import plotly.graph_objects as go
 from io import BytesIO
+from fpdf import FPDF
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="CAT Size Solution", page_icon="⚡", layout="wide")
@@ -2863,6 +2864,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
