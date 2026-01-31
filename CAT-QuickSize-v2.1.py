@@ -1069,29 +1069,33 @@ unit_site_cap = unit_iso_cap * derate_factor_calc
 # CORRECTED: SPINNING RESERVE CALCULATION FOR Load/Unit (%)
 # ============================================================================
 
-# First, calculate BESS requirements
+# ============================================================================
+# LOGICA SEPARADA: BESS (GOLPE) vs GENERADORES (RESERVA)
+# ============================================================================
+
+# 1. Calcular BESS usando el LOAD STEP FÍSICO (load_step_pct)
 bess_power_transient = 0.0
 bess_energy_transient = 0.0
 bess_breakdown_transient = {}
 
 if use_bess:
     bess_power_transient, bess_energy_transient, bess_breakdown_transient = calculate_bess_requirements(
-        p_total_avg, p_total_peak, step_load_req,
+        p_total_avg, p_total_peak, 
+        load_step_pct,  # <--- CORRECCIÓN: BESS debe aguantar el GOLPE FÍSICO
         gen_data["ramp_rate_mw_s"], gen_data["step_load_pct"],
-        load_ramp_req,  # <--- NUEVO PARÁMETRO PASADO AQUÍ
+        load_ramp_req,
         enable_black_start
     )
 
-# NOW: Calculate spinning reserve and running units CORRECTLY
+# 2. Calcular Generadores usando la POLÍTICA DE RESERVA (spinning_res_pct)
 spinning_reserve_result = calculate_spinning_reserve_units(
     p_avg_load=p_total_avg,
     unit_capacity=unit_site_cap,
-    spinning_reserve_pct=step_load_req,
+    spinning_reserve_pct=spinning_res_pct, # <--- CORRECCIÓN: Flota se dimensiona por POLÍTICA
     use_bess=use_bess,
     bess_power_mw=bess_power_transient if use_bess else 0,
     gen_step_capability_pct=gen_data["step_load_pct"]
 )
-
 # Extract results
 n_running_for_spinning = spinning_reserve_result['n_units_running']
 load_per_unit_spinning = spinning_reserve_result['load_per_unit_pct']
@@ -1600,9 +1604,9 @@ if volt_mode == "Auto-Recommend":
 else:
     rec_voltage_kv = manual_voltage_kv
 
-# Transient stability
+# Transient stability (Check against the physical HIT, not the reserve)
 stability_ok, voltage_sag = transient_stability_check(
-    gen_data["reactance_xd_2"], units_running, step_load_req
+    gen_data["reactance_xd_2"], units_running, load_step_pct
 )
 
 # ==============================================================================
@@ -2742,6 +2746,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
