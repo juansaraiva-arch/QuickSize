@@ -2362,15 +2362,17 @@ with t2:
         st.info(f"🔋 **BESS Capacity:** {bess_power_total:.1f} MW / {bess_energy_total:.1f} MWh")
         
         # BESS Breakdown
+        # FIX: Add Reliability Backup to the chart data
         bess_breakdown_data = pd.DataFrame({
-            'Component': ['Step Support', 'Peak Shaving', 'Ramp Support', 'Freq Reg', 'Spinning Reserve', 'Black Start'],
+            'Component': ['Step Support', 'Peak Shaving', 'Ramp Support', 'Freq Reg', 'Spinning Reserve', 'Black Start', 'Reliability Backup'],
             'Power (MW)': [
                 bess_breakdown.get('step_support', 0),
                 bess_breakdown.get('peak_shaving', 0),
                 bess_breakdown.get('ramp_support', 0),
                 bess_breakdown.get('freq_reg', 0),
                 bess_breakdown.get('spinning_reserve', 0),
-                bess_breakdown.get('black_start', 0)
+                bess_breakdown.get('black_start', 0),
+                bess_breakdown.get('reliability_backup', 0) # <--- ¡NUEVA LÍNEA!
             ]
         })
         
@@ -2725,6 +2727,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
