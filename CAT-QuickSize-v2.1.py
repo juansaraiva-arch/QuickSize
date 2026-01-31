@@ -1735,8 +1735,19 @@ else:
 # ==============================================================================
 
 # Apply regional multiplier
-gen_unit_cost = gen_data["est_cost_kw"] * regional_mult
-gen_install_cost = gen_data["est_install_kw"] * regional_mult
+# --- NUEVO: ECONOMÍA DE ESCALA ---
+# Penalizar proyectos pequeños (<20 MW) porque los costos fijos (ingeniería, permisos) pesan más.
+scale_factor = 1.0
+if installed_cap < 2.5: 
+    scale_factor = 1.30  # +30% costo unitario para Microgrids (<2.5 MW)
+elif installed_cap < 10.0:
+    scale_factor = 1.15  # +15% costo unitario para Pequeños (<10 MW)
+elif installed_cap < 50.0:
+    scale_factor = 1.05  # +5% costo unitario (<50 MW)
+# ---------------------------------
+
+gen_unit_cost = gen_data["est_cost_kw"] * regional_mult * scale_factor
+gen_install_cost = gen_data["est_install_kw"] * regional_mult * scale_factor
 
 gen_cost_total = (installed_cap * 1000) * gen_unit_cost / 1e6
 
@@ -2590,6 +2601,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT QuickSize v2.0 Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
