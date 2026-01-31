@@ -270,57 +270,45 @@ def calculate_spinning_reserve_units(p_avg_load, unit_capacity, spinning_reserve
         'required_online_capacity': required_online_capacity
     }
 
-
 def calculate_bess_requirements(p_net_req_avg, p_net_req_peak, step_load_req, 
-                                gen_ramp_rate, gen_step_capability, enable_black_start=False):
+                                gen_ramp_rate, gen_step_capability, 
+                                load_change_rate_req,  # <--- NUEVO ARGUMENTO
+                                enable_black_start=False):
     """
     Sophisticated BESS sizing based on actual transient analysis
-    NOW RESPONDS TO: Increased step load requirements
     """
-    # Component 1: Step Load Support (CRITICAL - responds to step_load_req)
+    # Component 1: Step Load Support
     step_load_mw = p_net_req_avg * (step_load_req / 100)
     gen_step_mw = p_net_req_avg * (gen_step_capability / 100)
     bess_step_support = max(0, step_load_mw - gen_step_mw)
     
-    # Component 2: Peak Shaving (covers peak vs average difference)
+    # Component 2: Peak Shaving
     bess_peak_shaving = p_net_req_peak - p_net_req_avg
     
-    # Component 3: Ramp Rate Support
-    load_change_rate = 5.0  # MW/s (AI workload aggressive)
-    bess_ramp_support = max(0, (load_change_rate - gen_ramp_rate) * 10)  # 10s buffer
+    # Component 3: Ramp Rate Support (AHORA DINÁMICO)
+    # Antes: load_change_rate = 5.0  <--- ELIMINADO
+    # Ahora usamos la variable del input:
+    bess_ramp_support = max(0, (load_change_rate_req - gen_ramp_rate) * 10)  # 10s buffer
     
-    # Component 4: Frequency Regulation
-    bess_freq_reg = p_net_req_avg * 0.05  # 5% for freq regulation
-    
-    # Component 5: Black Start Capability
+    # ... (Resto de componentes igual: Freq Reg, Black Start, Spinning) ...
+    bess_freq_reg = p_net_req_avg * 0.05
     bess_black_start = p_net_req_peak * 0.05 if enable_black_start else 0
+    bess_spinning_reserve = p_net_req_avg * (step_load_req / 100)
     
-    # Component 6: Spinning Reserve Support (NEW)
-    # BESS can cover spinning reserve, allowing generators to run at higher load
-    bess_spinning_reserve = p_net_req_avg * (step_load_req / 100)  # Same as spinning reserve req
-    
-    # Total Power (take maximum of all requirements)
+    # Total Power
     bess_power_total = max(
         bess_step_support,
         bess_peak_shaving,
         bess_ramp_support,
         bess_freq_reg,
         bess_black_start,
-        bess_spinning_reserve,  # NEW
-        p_net_req_peak * 0.15  # Minimum 15% floor
+        bess_spinning_reserve,
+        p_net_req_peak * 0.15
     )
     
-    # Energy Duration Calculation
-    step_event_duration = 60  # seconds
-    events_per_day = 5
-    
-    # C-rate consideration
-    c_rate = 1.0  # 1C = discharge in 1 hour
-    bess_energy_total = bess_power_total / c_rate
-    
-    # Round-trip efficiency consideration
-    rte = 0.85  # 85% round-trip efficiency
-    bess_energy_total = bess_energy_total / rte
+    # ... (Cálculo de energía y retorno igual) ...
+    c_rate = 1.0
+    bess_energy_total = bess_power_total / c_rate / 0.85
     
     breakdown = {
         'step_support': bess_step_support,
@@ -328,7 +316,7 @@ def calculate_bess_requirements(p_net_req_avg, p_net_req_peak, step_load_req,
         'ramp_support': bess_ramp_support,
         'freq_reg': bess_freq_reg,
         'black_start': bess_black_start,
-        'spinning_reserve': bess_spinning_reserve  # NEW
+        'spinning_reserve': bess_spinning_reserve
     }
     
     return bess_power_total, bess_energy_total, breakdown
@@ -636,51 +624,56 @@ with st.sidebar:
     # ===== LOAD PROFILE SECTION =====
     st.markdown("📊 **Annual Load Profile**")
     
+    # 1. Definimos los valores típicos por tipo de Data Center
     load_profiles = {
         "AI Factory (Training)": {
             "capacity_factor": 0.96,
             "peak_avg_ratio": 1.08,
+            "ramp_rate": 5.0,   # <--- NUEVO: Muy Agresivo (Checkpointing)
             "description": "Continuous 24/7 training runs"
         },
         "AI Factory (Inference)": {
             "capacity_factor": 0.85,
             "peak_avg_ratio": 1.25,
+            "ramp_rate": 3.0,   # <--- NUEVO: Alta variabilidad
             "description": "Variable inference loads with peaks"
         },
         "Hyperscale Standard": {
             "capacity_factor": 0.75,
             "peak_avg_ratio": 1.20,
+            "ramp_rate": 1.5,   # <--- NUEVO: Estándar
             "description": "Mixed workloads, diurnal patterns"
         },
         "Colocation": {
             "capacity_factor": 0.65,
             "peak_avg_ratio": 1.35,
+            "ramp_rate": 0.5,   # <--- NUEVO: Bajo (Cargas lentas)
             "description": "Multi-tenant, business hours peaks"
         },
         "Edge Computing": {
             "capacity_factor": 0.50,
             "peak_avg_ratio": 1.50,
+            "ramp_rate": 2.0,   # <--- NUEVO: Volátil
             "description": "Highly variable local demand"
         }
     }
     
     profile = load_profiles[dc_type]
     
+    # Sliders existentes...
     col_cf1, col_cf2 = st.columns(2)
-    capacity_factor = col_cf1.slider(
-        "Capacity Factor (%)", 
-        30.0, 100.0, 
-        profile["capacity_factor"]*100, 
-        1.0,
-        help=profile["description"]
-    ) / 100.0
+    capacity_factor = col_cf1.slider("Capacity Factor (%)", 30.0, 100.0, profile["capacity_factor"]*100, 1.0) / 100.0
+    peak_avg_ratio = col_cf2.slider("Peak/Avg Ratio", 1.0, 2.0, profile["peak_avg_ratio"], 0.05)
     
-    peak_avg_ratio = col_cf2.slider(
-        "Peak/Avg Ratio", 
-        1.0, 2.0, 
-        profile["peak_avg_ratio"], 
-        0.05
+    # --- NUEVO INPUT DE RAMPA ---
+    load_ramp_req = st.number_input(
+        "Load Ramp Rate Req (MW/s)",
+        min_value=0.1, max_value=20.0,
+        value=profile["ramp_rate"], # Toma el valor default del diccionario
+        step=0.1,
+        help="Velocidad de cambio de carga. AI = 3-5 MW/s (requiere BESS grande), Colocation = 0.5 MW/s."
     )
+    # ---------------------------
     
     # Calculate loads
     p_total_avg = p_total_dc * capacity_factor
@@ -1071,6 +1064,7 @@ if use_bess:
     bess_power_transient, bess_energy_transient, bess_breakdown_transient = calculate_bess_requirements(
         p_total_avg, p_total_peak, step_load_req,
         gen_data["ramp_rate_mw_s"], gen_data["step_load_pct"],
+        load_ramp_req,  # <--- NUEVO PARÁMETRO PASADO AQUÍ
         enable_black_start
     )
 
@@ -2556,5 +2550,6 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT QuickSize v2.0 Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
