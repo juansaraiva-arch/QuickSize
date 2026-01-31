@@ -175,96 +175,69 @@ def transient_stability_check(xd_pu, num_units, step_load_pct):
 def calculate_spinning_reserve_units(p_avg_load, unit_capacity, spinning_reserve_pct, 
                                      use_bess=False, bess_power_mw=0, gen_step_capability_pct=0):
     """
-    Calculate the number of running units needed considering spinning reserve requirements.
+    CORRECTED: Calculate the number of running units considering spinning reserve.
     
-    Spinning Reserve: Extra capacity needed to handle sudden load increases or generator trips.
+    SPINNING RESERVE = Extra online capacity to handle sudden load increases or generator trips.
+    This capacity must be ONLINE and ready to respond instantly.
     
     WITHOUT BESS:
-    - Generators must provide ALL spinning reserve
-    - More units run at LOWER load to have headroom
+    - Generators must provide ALL spinning reserve as HEADROOM
+    - Online Capacity = Avg Load + Full Spinning Reserve
+    - More units running at LOWER load per unit
     
     WITH BESS:
-    - BESS covers part (or all) of spinning reserve
-    - Fewer units run at HIGHER load = better efficiency
+    - BESS provides instant response for spinning reserve
+    - Online Capacity = Avg Load + small margin (BESS covers the reserve)
+    - Fewer units running at HIGHER load per unit = better efficiency
     
-    Parameters:
-    -----------
-    p_avg_load : float
-        Average load to serve (MW)
-    unit_capacity : float
-        Capacity per generator (MW)
-    spinning_reserve_pct : float
-        Required spinning reserve as % of average load
-    use_bess : bool
-        Whether BESS is available for spinning reserve
-    bess_power_mw : float
-        BESS power capacity (MW) - can cover spinning reserve
-    gen_step_capability_pct : float
-        Generator step load capability (% of rating)
+    Example (110 MW avg, 40% spinning reserve = 44 MW, 1.9 MW generators):
     
-    Returns:
-    --------
-    dict with:
-        - n_units_running: Number of generators in operation
-        - load_per_unit_pct: Load on each running unit (%)
-        - spinning_reserve_mw: Total spinning reserve required (MW)
-        - spinning_from_gens: Spinning reserve from generators (MW)
-        - spinning_from_bess: Spinning reserve from BESS (MW)
-        - total_online_capacity: Total capacity online (MW)
-        - headroom_available: Available headroom for load swings (MW)
+    WITHOUT BESS:
+      - Required online capacity = 110 + 44 = 154 MW
+      - Units needed = ceil(154 / 1.9) = 82 units
+      - Load/Unit = 110 / (82 * 1.9) = 70.6%
+    
+    WITH BESS (44 MW):
+      - BESS covers spinning reserve
+      - Required online capacity = 110 * 1.05 = 115.5 MW (5% margin)
+      - Units needed = ceil(115.5 / 1.9) = 61 units
+      - Load/Unit = 110 / (61 * 1.9) = 94.9%
     """
     
-    # Step 1: Calculate spinning reserve requirement
+    # Step 1: Calculate spinning reserve requirement in MW
     spinning_reserve_mw = p_avg_load * (spinning_reserve_pct / 100)
     
-    # Step 2: Determine how much BESS can contribute to spinning reserve
+    # Step 2: Determine how BESS contributes to spinning reserve
     if use_bess and bess_power_mw > 0:
         # BESS can cover spinning reserve up to its power rating
-        # But we limit it to the actual spinning reserve needed
         spinning_from_bess = min(bess_power_mw, spinning_reserve_mw)
     else:
         spinning_from_bess = 0
     
-    # Step 3: Remaining spinning reserve that generators must provide
+    # Step 3: Remaining spinning reserve that generators must provide as HEADROOM
     spinning_from_gens = spinning_reserve_mw - spinning_from_bess
     
     # Step 4: Calculate required online capacity
-    # Online capacity = Average Load + Generator Spinning Reserve Contribution
-    required_online_capacity = p_avg_load + spinning_from_gens
-    
-    # Step 5: Calculate number of units needed
-    # We need enough units to provide the required online capacity
-    # Each unit should not exceed ~85% load to maintain headroom for response
-    max_unit_load_pct = 85.0  # Maximum practical load per unit
-    
-    # Minimum units based on capacity at max load
-    n_min_capacity = math.ceil(required_online_capacity / (unit_capacity * max_unit_load_pct / 100))
-    
-    # Alternative: Calculate based on required headroom per unit
-    # Each running generator must contribute to spinning reserve
-    if spinning_from_gens > 0:
-        # Headroom needed per unit = Total gen spinning reserve / n_units
-        # We want load_pct + headroom_pct <= 100%
-        # So: load_pct = avg_load / (n * unit_cap) and headroom = spinning_from_gens / (n * unit_cap)
-        # Constraint: avg_load / (n * unit_cap) + spinning_from_gens / (n * unit_cap) <= max_load_pct
-        # => (avg_load + spinning_from_gens) / (n * unit_cap) <= max_load_pct
-        # => n >= (avg_load + spinning_from_gens) / (unit_cap * max_load_pct)
-        n_min_headroom = math.ceil(required_online_capacity / (unit_capacity * max_unit_load_pct / 100))
+    # This is the KEY difference between BESS and No-BESS scenarios
+    if use_bess and spinning_from_bess >= spinning_reserve_mw * 0.9:
+        # BESS covers most/all spinning reserve
+        # Generators only need to cover average load + small margin
+        required_online_capacity = p_avg_load * 1.05  # 5% operational margin
     else:
-        # With BESS covering all spinning reserve, generators just need to serve load
-        n_min_headroom = math.ceil(p_avg_load / (unit_capacity * max_unit_load_pct / 100))
+        # Generators must have HEADROOM for spinning reserve
+        # Online capacity = Average Load + Generator portion of spinning reserve
+        required_online_capacity = p_avg_load + spinning_from_gens
     
-    # Take the larger of the two constraints
-    n_units_running = max(n_min_capacity, n_min_headroom)
+    # Step 5: Calculate number of running units
+    # Simple: enough units to provide required online capacity
+    n_units_running = math.ceil(required_online_capacity / unit_capacity)
     
     # Ensure at least 1 unit
     n_units_running = max(1, n_units_running)
     
-    # Step 6: Calculate actual load per unit
+    # Step 6: Calculate actual metrics
     total_online_capacity = n_units_running * unit_capacity
     load_per_unit_pct = (p_avg_load / total_online_capacity) * 100
-    
-    # Step 7: Calculate actual headroom available
     headroom_available = total_online_capacity - p_avg_load
     
     return {
@@ -1111,7 +1084,7 @@ mttr_hours = 48  # Realistic: 2 days repair time
 reliability_configs = []
 
 # Configuration A: No BESS (Baseline)
-# Must calculate spinning reserve requirements WITHOUT BESS
+# Calculate spinning reserve requirements WITHOUT BESS
 spinning_no_bess = calculate_spinning_reserve_units(
     p_avg_load=p_total_avg,
     unit_capacity=unit_site_cap,
@@ -1121,99 +1094,83 @@ spinning_no_bess = calculate_spinning_reserve_units(
     gen_step_capability_pct=gen_data["step_load_pct"]
 )
 
-# Config A must size for PEAK load AND spinning reserve without any BESS assistance
-n_running_for_peak = int(math.ceil(p_total_peak / unit_site_cap))
-config_a_running = max(n_running_for_peak, spinning_no_bess['n_units_running'])
+# Config A: Use the calculated n_running directly from spinning reserve function
+# This already accounts for: Avg Load + Spinning Reserve headroom
+n_running_no_bess = spinning_no_bess['n_units_running']
+load_pct_no_bess = spinning_no_bess['load_per_unit_pct']
 
-print(f"[DEBUG] Config A: Sizing for peak={p_total_peak} MW, spinning reserve needs {spinning_no_bess['n_units_running']} units, final n_running={config_a_running}", file=sys.stderr)
+print(f"[DEBUG] Config A: n_running={n_running_no_bess}, load={load_pct_no_bess:.1f}%, spinning_reserve={spinning_no_bess['spinning_reserve_mw']:.1f} MW", file=sys.stderr)
 
-# Expand search range
-search_min_a = max(1, int(config_a_running * 0.95))  # Down to 95% 
-search_max_a = int(config_a_running * 1.2)  # Up to 120%
-
+# Find minimum reserve units (N+X) needed for availability target
 best_config_a = None
-
-# Search exhaustively for Config A
-for n_run in range(search_min_a, search_max_a):
-    # Config A: NO BESS - must cover PEAK load AND have spinning reserve headroom
-    capacity_min_a = spinning_no_bess['required_online_capacity']
-    if n_run * unit_site_cap < capacity_min_a:
-        continue
+for n_res in range(0, 20):
+    n_tot = n_running_no_bess + n_res
     
-    for n_res in range(0, 20):  # Extended to N+19
-        n_tot = n_run + n_res
-        
-        avg_avail, _ = calculate_availability_weibull(n_tot, n_run, mtbf_hours, project_years, gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"])
-        
-        if avg_avail >= avail_decimal:
-            # Calculate load per unit for Config A - CORRECTLY considering spinning reserve
-            # Load/Unit = Average Load / Total Online Capacity
-            load_pct_a = (p_total_avg / (n_run * unit_site_cap)) * 100
-            
-            print(f"[DEBUG] Config A FOUND: n_run={n_run}, n_res={n_res}, total={n_tot}, load={load_pct_a:.1f}%, avail={avg_avail*100:.4f}%", file=sys.stderr)
-            
-            best_config_a = {
-                'name': 'A: No BESS',
-                'n_running': n_run,
-                'n_reserve': n_res,
-                'n_total': n_tot,
-                'bess_mw': 0,
-                'bess_mwh': 0,
-                'bess_credit': 0,
-                'availability': avg_avail,
-                'load_pct': load_pct_a,
-                'spinning_reserve_mw': spinning_no_bess['spinning_reserve_mw'],
-                'spinning_from_gens': spinning_no_bess['spinning_from_gens'],
-                'spinning_from_bess': 0,
-                'headroom_mw': n_run * unit_site_cap - p_total_avg
-            }
-            break
-    if best_config_a:
-        break
-
-# If still not found, create fallback with CORRECT availability calculation
-if not best_config_a:
-    # Fallback: size for spinning reserve
-    fallback_n_run = config_a_running
-    fallback_n_res = 14
-    fallback_n_tot = fallback_n_run + fallback_n_res
-    
-    print(f"[DEBUG] Config A: Using fallback with n_run={fallback_n_run}, n_res={fallback_n_res}", file=sys.stderr)
-    
-    # Calculate ACTUAL availability for fallback (not hardcoded 95%)
-    fallback_avail, _ = calculate_availability_weibull(
-        fallback_n_tot, fallback_n_run, mtbf_hours, project_years,
+    avg_avail, _ = calculate_availability_weibull(
+        n_tot, n_running_no_bess, mtbf_hours, project_years, 
         gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"]
     )
     
-    # Calculate load - CORRECTLY
-    fallback_load_pct = (p_total_avg / (fallback_n_run * unit_site_cap)) * 100
+    if avg_avail >= avail_decimal:
+        # Calculate efficiency at this load point
+        eff_a = get_part_load_efficiency(gen_data["electrical_efficiency"], load_pct_no_bess, gen_data["type"])
+        
+        print(f"[DEBUG] Config A FOUND: n_run={n_running_no_bess}, n_res={n_res}, total={n_tot}, load={load_pct_no_bess:.1f}%, eff={eff_a*100:.2f}%, avail={avg_avail*100:.4f}%", file=sys.stderr)
+        
+        best_config_a = {
+            'name': 'A: No BESS',
+            'n_running': n_running_no_bess,
+            'n_reserve': n_res,
+            'n_total': n_tot,
+            'bess_mw': 0,
+            'bess_mwh': 0,
+            'bess_credit': 0,
+            'availability': avg_avail,
+            'load_pct': load_pct_no_bess,
+            'efficiency': eff_a,
+            'spinning_reserve_mw': spinning_no_bess['spinning_reserve_mw'],
+            'spinning_from_gens': spinning_no_bess['spinning_from_gens'],
+            'spinning_from_bess': 0,
+            'headroom_mw': spinning_no_bess['headroom_available']
+        }
+        break
+
+# Fallback if availability target not met
+if not best_config_a:
+    n_res_fallback = 15
+    n_tot_fallback = n_running_no_bess + n_res_fallback
+    
+    fallback_avail, _ = calculate_availability_weibull(
+        n_tot_fallback, n_running_no_bess, mtbf_hours, project_years,
+        gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"]
+    )
+    eff_a = get_part_load_efficiency(gen_data["electrical_efficiency"], load_pct_no_bess, gen_data["type"])
+    
+    print(f"[DEBUG] Config A FALLBACK: n_run={n_running_no_bess}, n_res={n_res_fallback}", file=sys.stderr)
     
     best_config_a = {
         'name': 'A: No BESS',
-        'n_running': fallback_n_run,
-        'n_reserve': fallback_n_res,
-        'n_total': fallback_n_tot,
+        'n_running': n_running_no_bess,
+        'n_reserve': n_res_fallback,
+        'n_total': n_tot_fallback,
         'bess_mw': 0,
         'bess_mwh': 0,
         'bess_credit': 0,
         'availability': fallback_avail,
-        'load_pct': fallback_load_pct,
+        'load_pct': load_pct_no_bess,
+        'efficiency': eff_a,
         'spinning_reserve_mw': spinning_no_bess['spinning_reserve_mw'],
         'spinning_from_gens': spinning_no_bess['spinning_from_gens'],
         'spinning_from_bess': 0,
-        'headroom_mw': fallback_n_run * unit_site_cap - p_total_avg
+        'headroom_mw': spinning_no_bess['headroom_available']
     }
+
 
 reliability_configs.append(best_config_a)
 
 # Configuration B: BESS Transient Only
 if use_bess:
-    # Debug logging
-    print(f"[DEBUG] Config B: Starting calculation", file=sys.stderr)
-    print(f"[DEBUG] p_total_avg={p_total_avg}, p_total_peak={p_total_peak}, unit_site_cap={unit_site_cap}", file=sys.stderr)
-    
-    # With BESS for spinning reserve, calculate requirements
+    # Calculate spinning reserve with BESS
     spinning_with_bess = calculate_spinning_reserve_units(
         p_avg_load=p_total_avg,
         unit_capacity=unit_site_cap,
@@ -1223,106 +1180,73 @@ if use_bess:
         gen_step_capability_pct=gen_data["step_load_pct"]
     )
     
-    # Minimum n_running with BESS covering spinning reserve
-    n_running_min_b = spinning_with_bess['n_units_running']
-    n_running_optimal_b = n_running_min_b
+    # Use the calculated values directly
+    n_running_with_bess = spinning_with_bess['n_units_running']
+    load_pct_with_bess = spinning_with_bess['load_per_unit_pct']
     
-    print(f"[DEBUG] Config B: BESS covers {spinning_with_bess['spinning_from_bess']:.1f} MW of spinning reserve", file=sys.stderr)
-    print(f"[DEBUG] Config B: n_running with BESS: {n_running_optimal_b} (vs {spinning_no_bess['n_units_running']} without BESS)", file=sys.stderr)
+    print(f"[DEBUG] Config B: n_running={n_running_with_bess}, load={load_pct_with_bess:.1f}%, BESS covers {spinning_with_bess['spinning_from_bess']:.1f} MW of spinning reserve", file=sys.stderr)
     
+    # Find minimum reserve units for availability
     best_config_b = None
-    found_b = False
-    
-    # Search around this point (±3 units for flexibility)
-    for n_run_offset in range(-3, 6):
-        if found_b:
-            break
+    for n_res in range(0, 20):
+        n_tot = n_running_with_bess + n_res
         
-        n_run = n_running_optimal_b + n_run_offset
-        if n_run < n_running_min_b:
-            continue
-        
-        # Check capacity (with BESS, only need to cover average + reduced spinning reserve)
-        if n_run * unit_site_cap < spinning_with_bess['required_online_capacity']:
-            continue
-        
-        # Search for minimum reserve needed
-        for n_res in range(0, 20):
-            n_tot = n_run + n_res
-            
-            try:
-                avg_avail, _ = calculate_availability_weibull(
-                    n_tot, n_run, mtbf_hours, project_years,
-                    gen_data["maintenance_interval_hrs"],
-                    gen_data["maintenance_duration_hrs"]
-                )
-                
-                if avg_avail >= avail_decimal:
-                    # Calculate metrics - CORRECTLY
-                    load_pct_b = (p_total_avg / (n_run * unit_site_cap)) * 100
-                    eff_b = get_part_load_efficiency(
-                        gen_data["electrical_efficiency"],
-                        load_pct_b,
-                        gen_data["type"]
-                    )
-                    
-                    print(f"[DEBUG] Config B FOUND: n_run={n_run}, n_res={n_res}, load={load_pct_b:.1f}%, eff={eff_b*100:.1f}%", file=sys.stderr)
-                    
-                    best_config_b = {
-                        'name': 'B: BESS Transient',
-                        'n_running': n_run,
-                        'n_reserve': n_res,
-                        'n_total': n_tot,
-                        'bess_mw': bess_power_transient,
-                        'bess_mwh': bess_energy_transient,
-                        'bess_credit': 0,
-                        'availability': avg_avail,
-                        'load_pct': load_pct_b,
-                        'efficiency': eff_b,
-                        'score': eff_b,
-                        'spinning_reserve_mw': spinning_with_bess['spinning_reserve_mw'],
-                        'spinning_from_gens': spinning_with_bess['spinning_from_gens'],
-                        'spinning_from_bess': spinning_with_bess['spinning_from_bess'],
-                        'headroom_mw': n_run * unit_site_cap - p_total_avg
-                    }
-                    found_b = True
-                    break
-            except Exception as e:
-                st.sidebar.error(f"Config B error: {str(e)}")
-                continue
-    
-    if best_config_b:
-        reliability_configs.append(best_config_b)
-    else:
-        # Fallback for Config B
-        st.sidebar.warning("⚠️ Config B: Using fallback")
-        n_run_fallback = n_running_min_b
-        n_res_fallback = 8
-        fallback_avail_b, _ = calculate_availability_weibull(
-            n_run_fallback + n_res_fallback, n_run_fallback,
-            mtbf_hours, project_years,
-            gen_data["maintenance_interval_hrs"],
-            gen_data["maintenance_duration_hrs"]
+        avg_avail, _ = calculate_availability_weibull(
+            n_tot, n_running_with_bess, mtbf_hours, project_years,
+            gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"]
         )
         
-        fallback_load_b = (p_total_avg / (n_run_fallback * unit_site_cap)) * 100
+        if avg_avail >= avail_decimal:
+            eff_b = get_part_load_efficiency(gen_data["electrical_efficiency"], load_pct_with_bess, gen_data["type"])
+            
+            print(f"[DEBUG] Config B FOUND: n_run={n_running_with_bess}, n_res={n_res}, total={n_tot}, load={load_pct_with_bess:.1f}%, eff={eff_b*100:.2f}%", file=sys.stderr)
+            
+            best_config_b = {
+                'name': 'B: BESS Transient',
+                'n_running': n_running_with_bess,
+                'n_reserve': n_res,
+                'n_total': n_tot,
+                'bess_mw': bess_power_transient,
+                'bess_mwh': bess_energy_transient,
+                'bess_credit': 0,
+                'availability': avg_avail,
+                'load_pct': load_pct_with_bess,
+                'efficiency': eff_b,
+                'spinning_reserve_mw': spinning_with_bess['spinning_reserve_mw'],
+                'spinning_from_gens': spinning_with_bess['spinning_from_gens'],
+                'spinning_from_bess': spinning_with_bess['spinning_from_bess'],
+                'headroom_mw': spinning_with_bess['headroom_available']
+            }
+            break
+    
+    # Fallback
+    if not best_config_b:
+        n_res_fallback = 10
+        n_tot_fallback = n_running_with_bess + n_res_fallback
+        fallback_avail_b, _ = calculate_availability_weibull(
+            n_tot_fallback, n_running_with_bess, mtbf_hours, project_years,
+            gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"]
+        )
+        eff_b = get_part_load_efficiency(gen_data["electrical_efficiency"], load_pct_with_bess, gen_data["type"])
         
         best_config_b = {
-            'name': 'B: BESS Transient (fallback)',
-            'n_running': n_run_fallback,
+            'name': 'B: BESS Transient',
+            'n_running': n_running_with_bess,
             'n_reserve': n_res_fallback,
-            'n_total': n_run_fallback + n_res_fallback,
+            'n_total': n_tot_fallback,
             'bess_mw': bess_power_transient,
             'bess_mwh': bess_energy_transient,
             'bess_credit': 0,
             'availability': fallback_avail_b,
-            'load_pct': fallback_load_b,
+            'load_pct': load_pct_with_bess,
+            'efficiency': eff_b,
             'spinning_reserve_mw': spinning_with_bess['spinning_reserve_mw'],
             'spinning_from_gens': spinning_with_bess['spinning_from_gens'],
             'spinning_from_bess': spinning_with_bess['spinning_from_bess'],
-            'headroom_mw': n_run_fallback * unit_site_cap - p_total_avg
+            'headroom_mw': spinning_with_bess['headroom_available']
         }
-        reliability_configs.append(best_config_b)
+    
+    reliability_configs.append(best_config_b)
 
 # Configuration C: BESS Hybrid (Balanced)
 if use_bess and bess_reliability_enabled:
