@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 from io import BytesIO
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="CAT QuickSize v2.0", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="CAT Size Solution", page_icon="⚡", layout="wide")
 
 # ==============================================================================
 # 0. HYBRID DATA LIBRARY - ENHANCED WITH DENSITY & RAMP RATE
@@ -566,7 +566,7 @@ else:
     u_energy, u_therm, u_water = "MWh", "GJ", "m³/day"
     u_press = "Bar"
 
-st.title(f"⚡ CAT QuickSize v2.0 ({freq_hz}Hz)")
+st.title(f"⚡ CAT Size Solution ({freq_hz}Hz)")
 st.markdown("**Next-Gen Data Center Power Solutions.**\nAdvanced modeling with PUE optimization, footprint constraints, and sophisticated LCOE analysis.")
 
 # ==============================================================================
@@ -2497,7 +2497,17 @@ with t3:
         st.success(f"✅ **Footprint OK:** {area_utilization_pct:.1f}% of available area")
 
 with t4:
-    st.subheader("Cooling & Tri-Generation")
+    st.subheader("Cooling & Tri-Gen")
+    
+    # --- NUEVO: VALIDACIÓN DE INGENIERÍA (REALITY CHECK) ---
+    if include_chp and cooling_method == "Air-Cooled":
+        st.warning(
+            "⚠️ **Engineering Conflict Detected:**\n\n"
+            "You have selected **Air-Cooled** but enabled **Tri-Generation (CHP)**.\n"
+            "- CHP uses waste heat for Absorption Chillers, which typically require water towers (Water-Cooled).\n"
+            "- **Reality Check:** Ensure site has water availability for the CHP loop, even if IT cooling is air-based."
+        )
+    # -------------------------------------------------------
     
     col_c1, col_c2, col_c3, col_c4 = st.columns(4)
     
@@ -2713,9 +2723,10 @@ with t5:
 # --- FOOTER ---
 st.markdown("---")
 col_foot1, col_foot2, col_foot3 = st.columns(3)
-col_foot1.caption("CAT QuickSize v2.0 Corrected")
+col_foot1.caption("CAT Size Solution Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
