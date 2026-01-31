@@ -684,8 +684,23 @@ with st.sidebar:
             f"- Effective Hours/Year: **{8760*capacity_factor:.0f} hrs**")
     
     avail_req = st.number_input("Required Availability (%)", 90.0, 99.99999, 99.99, format="%.5f")
-    step_load_req = st.number_input("Spinning Reserve Req (%)", 0.0, 100.0, def_step_load,
-                                    help="Spinning reserve = extra capacity to handle sudden load increases or generator trips")
+    col_req1, col_req2 = st.columns(2)
+    
+    # 1. Fluctuación FÍSICA de la carga (Lo que la carga hace)
+    load_step_pct = col_req1.number_input(
+        "Max Load Step / Fluctuation (%)", 
+        0.0, 100.0, 
+        def_step_load if is_ai else 25.0,
+        help="La fluctuación transitoria máxima (ej. AI Checkpointing = 50-80%). Define el tamaño del BESS para estabilidad."
+    )
+    
+    # 2. Política de RESERVA (Lo que queremos guardar)
+    spinning_res_pct = col_req2.number_input(
+        "Spinning Reserve Target (%)", 
+        0.0, 100.0, 
+        20.0, # Default más bajo porque ahora distinguimos el golpe
+        help="Reserva rodante deseada en generadores (N+X). Puede ser menor que el Step si usas BESS."
+    )
     
     # ===== NEW: FOOTPRINT CONSTRAINTS =====
     st.markdown("📐 **Site Constraints**")
@@ -2727,6 +2742,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
