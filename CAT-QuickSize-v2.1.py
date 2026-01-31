@@ -948,7 +948,8 @@ for gen_name, gen_data in available_gens.items():
     if unit_derated < (p_total_peak * 0.1):
         continue
     
-    step_match = 1.0 if gen_data["step_load_pct"] >= step_load_req else 0.5
+    # Usamos load_step_pct (Golpe Físico) para ver si el motor aguanta
+    step_match = 1.0 if gen_data["step_load_pct"] >= load_step_pct else 0.5
     eff_score = gen_data["electrical_efficiency"] * 10
     cost_score = -gen_data["est_cost_kw"] / 100
     density_score = gen_data["power_density_mw_per_m2"] * 20  # Favor high density
@@ -2746,6 +2747,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
