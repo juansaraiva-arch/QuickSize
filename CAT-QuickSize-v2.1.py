@@ -2755,61 +2755,104 @@ with t5:
     # <--- PEGA EL CÓDIGO DEL REPORTE AQUÍ --- (Línea ~1760)
 
 # =========================================================================
-# 📄 REPORT GENERATION (PROJECT DELIVERABLES)
-# =========================================================================
-st.markdown("---")  # (Opcional: separador visual si no usas sidebar, pero el código usa st.sidebar)
-st.sidebar.markdown("---")
-st.sidebar.markdown("📄 **Project Deliverables**")
+    # 📄 PDF REPORT GENERATION (PROJECT DELIVERABLES)
+    # =========================================================================
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("📄 **Project Deliverables**")
 
-# Generamos el timestamp
-timestamp = pd.Timestamp.now().strftime('%Y-%m-%d_%H%M')
+    # Función para generar el PDF en memoria
+    def create_pdf():
+        pdf = FPDF()
+        pdf.add_page()
+        
+        # Título Principal
+        pdf.set_font("Arial", 'B', 16)
+        pdf.cell(0, 10, "CAT Size Solution - Executive Brief", ln=True, align='C')
+        pdf.ln(5)
+        
+        # Meta-datos
+        pdf.set_font("Arial", 'I', 10)
+        timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')
+        pdf.cell(0, 5, f"Date: {timestamp} | Project: {dc_type} | Region: {region}", ln=True, align='C')
+        pdf.line(10, 30, 200, 30)
+        pdf.ln(10)
+        
+        # 1. Executive Summary
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(0, 10, "1. Executive Summary", ln=True)
+        pdf.set_font("Arial", '', 11)
+        
+        summary_text = (
+            f"Proposed high-availability power solution designed to meet {avail_req}% uptime "
+            f"while managing extreme AI load fluctuations ({load_step_pct}% Step Load)."
+        )
+        pdf.multi_cell(0, 5, summary_text)
+        pdf.ln(3)
+        
+        # Bullet points Summary
+        pdf.cell(10) # Indent
+        pdf.cell(0, 5, f"- Selected Configuration: {selected_config['name']}", ln=True)
+        pdf.cell(10)
+        pdf.cell(0, 5, f"- Total Capacity: {installed_cap:.1f} MW ({n_total} units)", ln=True)
+        pdf.cell(10)
+        pdf.cell(0, 5, f"- Technology: {selected_gen} ({gen_data['type']})", ln=True)
+        pdf.ln(5)
 
-# Creamos el contenido (Asegúrate de que 'load_step_pct' esté definido en tus inputs)
-report_content = f"""# ⚡ CAT Size Solution - Executive Engineering Brief
-**Date:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}
-**Project:** {dc_type} | **Region:** {region}
+        # 2. Technical Performance
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(0, 10, "2. Technical Performance", ln=True)
+        pdf.set_font("Arial", '', 11)
+        
+        pdf.cell(10); pdf.cell(0, 5, f"- Availability: {prob_gen*100:.5f}% (Target: {avail_req}%)", ln=True)
+        pdf.cell(10); pdf.cell(0, 5, f"- System Efficiency: {net_efficiency*100:.2f}% (Heat Rate: {heat_rate_lhv_mj:.1f} MJ/kWh)", ln=True)
+        pdf.cell(10); pdf.cell(0, 5, f"- PUE Optimization: {pue:.2f} -> {pue_actual:.2f} (via {cooling_method})", ln=True)
+        pdf.ln(5)
 
----
+        # 3. Financial Overview
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(0, 10, "3. Financial Overview (20-Year Model)", ln=True)
+        pdf.set_font("Arial", '', 11)
+        
+        pdf.cell(10); pdf.cell(0, 5, f"- Total CAPEX: ${total_capex_dynamic:.2f} Million", ln=True)
+        pdf.cell(10); pdf.cell(0, 5, f"- LCOE: ${lcoe_dyn:.4f}/kWh", ln=True)
+        pdf.cell(10); pdf.cell(0, 5, f"- NPV (20yr): ${npv_dyn/1e6:.2f} Million", ln=True)
+        pdf.cell(10); pdf.cell(0, 5, f"- Payback Period: {payback_str_dyn}", ln=True)
+        pdf.ln(5)
 
-## 1. Executive Summary
-Proposed high-availability power solution designed to meet **{avail_req}%** uptime while managing extreme AI load fluctuations (**{load_step_pct}% Step Load**).
+        # 4. BESS & Stability
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(0, 10, "4. BESS & Stability Integration", ln=True)
+        pdf.set_font("Arial", '', 11)
+        
+        pdf.cell(10); pdf.cell(0, 5, f"- BESS Capacity: {bess_power_total:.1f} MW / {bess_energy_total:.1f} MWh", ln=True)
+        pdf.ln(2)
+        
+        # Checkboxes (Simulados con texto)
+        chk_transient = "[x]"
+        chk_step = "[x]"
+        chk_spin = "[x]" if selected_config.get('spinning_from_bess', 0) > 0 else "[ ]"
+        chk_black = "[x]" if enable_black_start else "[ ]"
+        
+        pdf.cell(10); pdf.cell(0, 5, f"{chk_transient} Transient Stability (Voltage Sag Mitigation)", ln=True)
+        pdf.cell(10); pdf.cell(0, 5, f"{chk_step} Step Load Support ({bess_breakdown.get('step_support', 0):.1f} MW)", ln=True)
+        pdf.cell(10); pdf.cell(0, 5, f"{chk_spin} Spinning Reserve Replacement", ln=True)
+        pdf.cell(10); pdf.cell(0, 5, f"{chk_black} Black Start Capability", ln=True)
+        
+        pdf.ln(10)
+        pdf.set_font("Arial", 'I', 9)
+        pdf.cell(0, 5, "Generated by Caterpillar Electric Power | CAT Size Solution v1.0", ln=True, align='C')
+        
+        return pdf.output(dest='S').encode('latin-1')
 
-* **Selected Configuration:** {selected_config['name']}
-* **Total Capacity:** {installed_cap:.1f} MW ({n_total} units)
-* **Operational Fleet:** {n_running} Running + {n_reserve} Reserve
-* **Technology:** {selected_gen} ({gen_data['type']})
-
-## 2. Technical Performance
-* **Availability:** {prob_gen*100:.5f}% (Target: {avail_req}%)
-* **System Efficiency:** {net_efficiency*100:.2f}% (Heat Rate: {heat_rate_lhv_mj:.1f} MJ/kWh)
-* **Response Capability:** Handles {load_step_pct}% load step via BESS + Gen Hybrid.
-* **PUE Optimization:** {pue:.2f} -> {pue_actual:.2f} (via {cooling_method}{' + CHP' if include_chp else ''})
-
-## 3. Financial Overview (20-Year Model)
-* **Total CAPEX:** ${total_capex_dynamic:.2f} Million
-* **LCOE:** ${lcoe_dyn:.4f}/kWh
-* **Net Present Value (NPV):** ${npv_dyn/1e6:.2f} Million
-* **Payback Period:** {payback_str_dyn}
-
-## 4. BESS & Stability Integration
-* **BESS Capacity:** {bess_power_total:.1f} MW / {bess_energy_total:.1f} MWh
-* **Critical Functions:**
-    * [x] Transient Stability (Voltage Sag Mitigation)
-    * [x] Step Load Support ({bess_breakdown.get('step_support', 0):.1f} MW)
-    * [{'x' if include_chp else ' '}] Spinning Reserve Replacement ({selected_config.get('spinning_from_bess', 0):.1f} MW)
-    * [{'x' if enable_black_start else ' '}] Black Start Capability
-
----
-*Generated by Caterpillar Electric Power | CAT Size Solution v1.0*
-"""
-
-st.sidebar.download_button(
-    label="📥 Download Engineering Brief",
-    data=report_content,
-    file_name=f"CAT_Solution_{dc_type.replace(' ', '_')}_{timestamp}.md",
-    mime="text/markdown",
-    help="Download a professional summary for your manager/client."
-)
+    # Generar el archivo solo cuando se interactúa
+    pdf_bytes = create_pdf()
+    
+    st.sidebar.download_button(
+        label="📄 Download PDF Report",
+        data=pdf_bytes,
+        file_name=f"CAT_Solution_{dc_type.replace(' ', '_')}.pdf",
+        mime="application/pdf"
+    )
 
 # --- FOOTER ---
 st.markdown("---")
@@ -2820,6 +2863,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
