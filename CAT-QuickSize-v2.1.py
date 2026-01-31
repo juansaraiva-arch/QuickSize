@@ -1132,7 +1132,7 @@ reliability_configs = []
 spinning_no_bess = calculate_spinning_reserve_units(
     p_avg_load=p_total_avg,
     unit_capacity=unit_site_cap,
-    spinning_reserve_pct=step_load_req,
+    spinning_reserve_pct=spinning_res_pct,  # <--- CORREGIDO (Política)
     use_bess=False,
     bess_power_mw=0,
     gen_step_capability_pct=gen_data["step_load_pct"]
@@ -1217,11 +1217,11 @@ reliability_configs.append(best_config_a)
 
 # Configuration B: BESS Transient Only
 if use_bess:
-    # Calculate spinning reserve with BESS
+   # Calculate spinning reserve with BESS
     spinning_with_bess = calculate_spinning_reserve_units(
         p_avg_load=p_total_avg,
         unit_capacity=unit_site_cap,
-        spinning_reserve_pct=step_load_req,
+        spinning_reserve_pct=spinning_res_pct,  # <--- CORREGIDO (Política)
         use_bess=True,
         bess_power_mw=bess_power_transient,
         gen_step_capability_pct=gen_data["step_load_pct"]
@@ -2747,6 +2747,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
