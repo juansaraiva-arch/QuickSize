@@ -1620,6 +1620,10 @@ area_chp = total_cooling_mw * 20 if include_chp else (p_total_avg * 10)
 area_sub = 2500
 total_area_m2 = (area_gen + storage_area_m2 + area_chp + area_bess + area_sub) * 1.2
 
+# ==============================================================================
+# FOOTPRINT OPTIMIZATION (LOGIC REPLACEMENT)
+# ==============================================================================
+
 # FOOTPRINT OPTIMIZATION
 is_area_exceeded = total_area_m2 > max_area_m2
 area_utilization_pct = (total_area_m2 / max_area_m2) * 100 if enable_footprint_limit else 0
@@ -1629,38 +1633,98 @@ footprint_recommendations = []
 if is_area_exceeded and enable_footprint_limit:
     current_density = gen_data["power_density_mw_per_m2"]
     
-    for alt_gen_name, alt_gen_data in available_gens.items():
-        if alt_gen_data["power_density_mw_per_m2"] > current_density * 1.3:
+    # -------------------------------------------------------------------------
+    # STRATEGY 1: TECHNOLOGY SWITCH (Search FULL Library, ignore filters)
+    # -------------------------------------------------------------------------
+    # Buscamos en TODA la librería, no solo en lo seleccionado
+    for alt_gen_name, alt_gen_data in leps_gas_library.items():
+        # Solo sugerir si la densidad es mayor
+        if alt_gen_data["power_density_mw_per_m2"] > current_density:
+            
+            # Recalcular fleet con la nueva tecnología
+            alt_derate = derate_factor_calc # Asumimos mismo derate factor por simplicidad
+            alt_unit_cap = alt_gen_data["iso_rating_mw"] * alt_derate
+            
+            # Fleet sizing
+            if use_bess:
+                alt_n_running = math.ceil(p_total_avg * 1.15 / alt_unit_cap)
+            else:
+                alt_n_running = math.ceil(p_total_peak / alt_unit_cap)
+            
+            # Mantener el mismo nivel de redundancia N+X original para la comparación justa
+            alt_n_total = alt_n_running + n_reserve 
+            
+            # Calcular nueva área
             alt_area_per_gen = 1 / alt_gen_data["power_density_mw_per_m2"]
-            alt_unit_cap = alt_gen_data["iso_rating_mw"] * derate_factor_calc
-            alt_n_running = math.ceil(p_total_peak / alt_unit_cap)
-            alt_n_total = alt_n_running + n_reserve
             alt_area_gen = alt_n_total * alt_unit_cap * alt_area_per_gen
             alt_total_area = (alt_area_gen + storage_area_m2 + area_chp + area_bess + area_sub) * 1.2
             
+            # Si cabe (o mejora significativamente, digamos reduce el exceso a la mitad)
             if alt_total_area <= max_area_m2:
+                savings_pct = ((total_area_m2 - alt_total_area) / total_area_m2) * 100
+                
                 footprint_recommendations.append({
-                    'type': 'Switch Technology',
-                    'action': f'Change to {alt_gen_name}',
+                    'type': '🚀 Tech Switch',
+                    'action': f'Switch to **{alt_gen_name}** ({alt_gen_data["type"]})',
                     'new_area': alt_total_area,
-                    'savings_pct': ((total_area_m2 - alt_total_area) / total_area_m2) * 100,
-                    'trade_off': f'Efficiency: {alt_gen_data["electrical_efficiency"]*100:.1f}% vs {gen_data["electrical_efficiency"]*100:.1f}%'
+                    'savings_pct': savings_pct,
+                    'trade_off': f'Higher Density ({alt_gen_data["power_density_mw_per_m2"]*1000:.0f} kW/m²)'
                 })
-    
+
+    # -------------------------------------------------------------------------
+    # STRATEGY 2: AGGRESSIVE REDUNDANCY REDUCTION (Iterative Loop)
+    # -------------------------------------------------------------------------
+    # Probamos reduciendo la reserva paso a paso hasta que quepa o lleguemos a N+0
     if n_reserve > 0:
-        reduced_n = n_total - 1
-        reduced_area_gen = reduced_n * unit_site_cap * area_per_gen
-        reduced_total_area = (reduced_area_gen + storage_area_m2 + area_chp + area_bess + area_sub) * 1.2
+        found_reduction = False
         
-        reduced_avail, _ = calculate_availability_weibull(reduced_n, n_running, mtbf_hours, project_years, gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"])
+        # Iterar desde (Reserva - 1) hasta 0
+        for r_try in range(n_reserve - 1, -1, -1):
+            reduced_n_total = n_running + r_try
+            
+            # Recalcular área
+            reduced_area_gen = reduced_n_total * unit_site_cap * area_per_gen
+            reduced_total_area = (reduced_area_gen + storage_area_m2 + area_chp + area_bess + area_sub) * 1.2
+            
+            # Si logramos entrar en el área
+            if reduced_total_area <= max_area_m2:
+                # Calcular penalización de disponibilidad
+                reduced_avail, _ = calculate_availability_weibull(
+                    reduced_n_total, n_running, mtbf_hours, project_years, 
+                    gen_data["maintenance_interval_hrs"], gen_data["maintenance_duration_hrs"]
+                )
+                
+                # Si tenemos BESS, sumar el crédito
+                if use_bess and 'bess_credit' in selected_config:
+                     reduced_avail = min(0.9999, reduced_avail + 0.0005) # Approx boost
+                
+                savings_pct = ((total_area_m2 - reduced_total_area) / total_area_m2) * 100
+                avail_drop = (prob_gen - reduced_avail) * 100
+                
+                footprint_recommendations.append({
+                    'type': '📉 Reduce Redundancy',
+                    'action': f'Reduce to **N+{r_try}** (Remove {n_reserve - r_try} units)',
+                    'new_area': reduced_total_area,
+                    'savings_pct': savings_pct,
+                    'trade_off': f'⚠️ Availability drops to **{reduced_avail*100:.4f}%** (Target: {avail_req}%)'
+                })
+                found_reduction = True
+                break # Encontramos la máxima reserva posible que cabe, paramos.
         
-        if reduced_total_area <= max_area_m2:
-            footprint_recommendations.append({
-                'type': 'Reduce Redundancy',
-                'action': f'Change from N+{n_reserve} to N+{n_reserve-1}',
+        # Si ni siquiera N+0 cabe, sugerir N+0 de todos modos como "Mejor Esfuerzo"
+        if not found_reduction:
+             r_try = 0
+             reduced_n_total = n_running
+             reduced_area_gen = reduced_n_total * unit_site_cap * area_per_gen
+             reduced_total_area = (reduced_area_gen + storage_area_m2 + area_chp + area_bess + area_sub) * 1.2
+             savings_pct = ((total_area_m2 - reduced_total_area) / total_area_m2) * 100
+             
+             footprint_recommendations.append({
+                'type': '🚨 Extreme Reduction',
+                'action': f'Minimize to **N+0** (No Redundancy)',
                 'new_area': reduced_total_area,
-                'savings_pct': ((total_area_m2 - reduced_total_area) / total_area_m2) * 100,
-                'trade_off': f'Availability: {reduced_avail*100:.3f}% vs {prob_gen*100:.3f}%'
+                'savings_pct': savings_pct,
+                'trade_off': f'⚠️ Critical Availability Risk. Still exceeds area by {(reduced_total_area/max_area_m2)*100 - 100:.1f}%'
             })
 
 # Display conversions
@@ -2601,6 +2665,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT QuickSize v2.0 Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
