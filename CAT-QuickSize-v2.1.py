@@ -2540,10 +2540,61 @@ with t5:
         total_tax_benefit_m = itc_benefit_m + depreciation_benefit_m + (ptc_annual * project_years / 1e6)
         col_tax4.metric("Total Tax Benefit", f"${total_tax_benefit_m:.2f}M")
     
-    # LCOE Target Check
+   # ==========================================================================
+    # LCOE GAP ANALYSIS & RECOMMENDER SYSTEM
+    # ==========================================================================
     if enable_lcoe_target and target_lcoe > 0:
-        if lcoe > target_lcoe:
-            st.error(f"⚠️ **Target Missed:** LCOE ${lcoe:.4f}/kWh > Target ${target_lcoe:.4f}/kWh")
+        lcoe_gap = lcoe - target_lcoe
+        
+        if lcoe_gap > 0:
+            st.error(f"⚠️ **Target Missed:** LCOE ${lcoe:.4f}/kWh > Target ${target_lcoe:.4f}/kWh (Gap: +${lcoe_gap:.4f})")
+            
+            st.markdown("### 💡 Strategies to Reduce LCOE")
+            rec_count = 0
+            
+            # 1. ANALISIS DE EFICIENCIA (High Efficiency vs Fast Response)
+            # Si la eficiencia es < 44% y el gas es caro (> $3.5), sugerir cambio de motor
+            if gen_data['electrical_efficiency'] < 0.44 and total_gas_price > 3.5:
+                # Estimar ahorro por pasar a G3520K (45.3%)
+                fuel_saving_pct = 1 - (gen_data['electrical_efficiency'] / 0.453)
+                potential_saving = (fuel_cost_year * abs(fuel_saving_pct)) / (mwh_year * 1000)
+                
+                if potential_saving > 0.002:
+                    st.info(f"🔹 **Upgrade to High Efficiency:** Switching to **G3520K** or **G20CM34** could save ~${potential_saving:.4f}/kWh in fuel.")
+                    rec_count += 1
+
+            # 2. CREDITOS FISCALES (ITC / CHP)
+            # Si no tiene CHP activo, está perdiendo el 30% de ITC y eficiencia térmica
+            if not include_chp:
+                # Estimar impacto del ITC (30% CAPEX Credit)
+                potential_itc = (initial_capex_sum * 0.30 * 1e6) * crf / (mwh_year * 1000)
+                if potential_itc > 0.003:
+                    st.info(f"🔹 **Enable Tri-Generation (CHP):** Adding heat recovery unlocks **30% ITC Tax Credit**, reducing LCOE by ~${potential_itc:.4f}/kWh.")
+                    rec_count += 1
+
+            # 3. FINANCIAMIENTO (WACC)
+            # El WACC al 8% es estándar, pero si es >7%, reducirlo impacta mucho
+            if wacc > 0.07:
+                # Estimar impacto de bajar WACC a 5%
+                low_wacc = 0.05
+                crf_low = (low_wacc * (1 + low_wacc)**project_years) / ((1 + low_wacc)**project_years - 1)
+                capex_saving = ((initial_capex_sum * 1e6) * (crf - crf_low)) / (mwh_year * 1000)
+                st.info(f"🔹 **Refinance Project:** Lowering WACC from {wacc*100:.1f}% to 5.0% would save ${capex_saving:.4f}/kWh.")
+                rec_count += 1
+            
+            # 4. PRECIO DEL GAS
+            if total_gas_price > 4.5:
+                st.info(f"🔹 **Gas Contract:** Your gas price (${total_gas_price:.2f}) is high. Negotiating down to $3.50 would save ${(total_gas_price - 3.50) * 10:.4f}/kWh approx.")
+                rec_count += 1
+                
+            # 5. UTILIZACIÓN (Capacity Factor)
+            if capacity_factor < 0.80 and dc_type != "Edge Computing":
+                 st.info(f"🔹 **Increase Utilization:** Increasing Capacity Factor spreads fixed CAPEX over more kWh. Current: {capacity_factor*100:.0f}%.")
+                 rec_count += 1
+
+            if rec_count == 0:
+                st.warning("⚠️ LCOE is optimized for these conditions. Consider extending Project Life or seeking Grants.")
+
         else:
             st.success(f"🎉 **Target Met:** LCOE ${lcoe:.4f}/kWh < Target ${target_lcoe:.4f}/kWh")
     
@@ -2665,6 +2716,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT QuickSize v2.0 Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
