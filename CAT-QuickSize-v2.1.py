@@ -148,17 +148,36 @@ leps_gas_library = {
 # ==============================================================================
 
 def get_part_load_efficiency(base_eff, load_pct, gen_type):
-    """Efficiency curves validated against CAT test data"""
+    """
+    Efficiency curves validated against CAT test data using Linear Interpolation.
+    Ensures 100% load = 100% of rated efficiency.
+    """
+    # Clamp load percentage reasonable limits
+    load_pct = max(0, min(100, load_pct))
+    
     if gen_type == "High Speed":
-        eff_mult = -0.0008*(load_pct**2) + 0.18*load_pct + 82
-        return base_eff * (eff_mult / 100)
+        # Data points (Load %, Efficiency Factor)
+        # Based on G3520/G3516 characteristic curves
+        xp = [0, 25, 50, 75, 100]
+        fp = [0.0, 0.70, 0.88, 0.96, 1.00]
+        
     elif gen_type == "Medium Speed":
-        eff_mult = -0.0005*(load_pct**2) + 0.12*load_pct + 88
-        return base_eff * (eff_mult / 100)
+        # Medium speed engines (G20CM34) are flatter at part load
+        xp = [0, 25, 50, 75, 100]
+        fp = [0.0, 0.75, 0.91, 0.97, 1.00]
+        
     elif gen_type == "Gas Turbine":
-        eff_mult = -0.0015*(load_pct**2) + 0.25*load_pct + 75
-        return base_eff * (eff_mult / 100)
-    return base_eff
+        # Turbines lose efficiency very fast at part load
+        xp = [0, 25, 50, 75, 100]
+        fp = [0.0, 0.55, 0.78, 0.90, 1.00]
+        
+    else:
+        return base_eff
+
+    # Interpolate exact factor
+    factor = np.interp(load_pct, xp, fp)
+    
+    return base_eff * factor
 
 def transient_stability_check(xd_pu, num_units, step_load_pct):
     """Critical voltage sag check for AI workloads"""
@@ -2525,3 +2544,4 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT QuickSize v2.0 Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
