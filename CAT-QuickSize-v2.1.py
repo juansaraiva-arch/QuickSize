@@ -2741,8 +2741,7 @@ with t5:
         yaxis_title="LCOE ($/kWh)",
         height=450
     )
-    st.plotly_chart(fig_sens, use_container_width=True)
-
+    
 # --- FOOTER ---
 # ... (código del gráfico de sensibilidad en Tab 5) ...
     fig_sens.update_layout(
@@ -2821,6 +2820,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution Corrected")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
