@@ -553,392 +553,167 @@ def calculate_macrs_depreciation(capex, project_years):
     return pv_benefit
 
 # ==============================================================================
-# 1. GLOBAL SETTINGS & SIDEBAR
+# 1. GLOBAL SETTINGS & SIDEBAR (ORGANIZED v3.1)
 # ==============================================================================
 
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/generator.png", width=60)
     st.header("Global Settings")
     c_glob1, c_glob2 = st.columns(2)
-    unit_system = c_glob1.radio("Units", ["Metric (SI)", "Imperial (US)"])
-    freq_hz = c_glob2.radio("System Frequency", [60, 50])
+    unit_system = c_glob1.radio("Units", ["Metric (SI)", "Imperial (US)"], label_visibility="collapsed")
+    freq_hz = c_glob2.radio("Freq", [60, 50], label_visibility="collapsed")
 
-is_imperial = "Imperial" in unit_system
-is_50hz = freq_hz == 50
-
-# Unit Strings
-if is_imperial:
-    u_temp, u_dist, u_area_s, u_area_l = "°F", "ft", "ft²", "Acres"
-    u_vol, u_mass, u_power = "gal", "Short Tons", "MW"
-    u_energy, u_therm, u_water = "MWh", "MMBtu", "gal/day"
-    u_press = "psig"
-else:
-    u_temp, u_dist, u_area_s, u_area_l = "°C", "m", "m²", "Ha"
-    u_vol, u_mass, u_power = "m³", "Tonnes", "MW"
-    u_energy, u_therm, u_water = "MWh", "GJ", "m³/day"
-    u_press = "Bar"
-
-st.title(f"⚡ CAT Size Solution ({freq_hz}Hz)")
-st.markdown("**Next-Gen Data Center Power Solutions.**\nAdvanced modeling with PUE optimization, footprint constraints, and sophisticated LCOE analysis.")
-
-# ==============================================================================
-# 2. INPUTS - ENHANCED WITH PUE
-# ==============================================================================
-
-with st.sidebar:
-    st.header("1. Site & Requirements")
+    is_imperial = "Imperial" in unit_system
+    is_50hz = freq_hz == 50
     
-    st.markdown("🏗️ **Data Center Profile**")
+    # Definición de Unidades
+    if is_imperial:
+        u_temp, u_dist, u_area = "°F", "ft", "ft²"
+        u_press = "psig"
+    else:
+        u_temp, u_dist, u_area = "°C", "m", "m²"
+        u_press = "Bar"
+
+    st.title(f"CAT Size Solution ({freq_hz}Hz)")
+    st.divider()
+
+    # -------------------------------------------------------------------------
+    # 1. PERFIL DE CARGA (LOAD PROFILE)
+    # -------------------------------------------------------------------------
+    st.header("1. Load Profile")
+    
     dc_type = st.selectbox("Data Center Type", [
-        "AI Factory (Training)", 
-        "AI Factory (Inference)",
-        "Hyperscale Standard", 
-        "Colocation", 
-        "Edge Computing"
+        "AI Factory (Training)", "AI Factory (Inference)", 
+        "Hyperscale Standard", "Colocation", "Edge Computing"
     ])
     
-    # PUE defaults by type (2026 best practices)
-    pue_defaults = {
-        "AI Factory (Training)": 1.15,      # Liquid cooling, DLC
-        "AI Factory (Inference)": 1.20,     # High density, optimized
-        "Hyperscale Standard": 1.25,        # Air cooling, free cooling
-        "Colocation": 1.50,                 # Multi-tenant
-        "Edge Computing": 1.60              # Small scale
-    }
+    p_it = st.number_input("Critical IT Load (MW)", 1.0, 2000.0, 100.0, step=10.0)
     
-    # Step load and BESS defaults
-    is_ai = "AI" in dc_type
-    def_step_load = 40.0 if is_ai else 15.0
-    def_use_bess = True if is_ai else False
-    
-    p_it = st.number_input("Critical IT Load (MW)", 1.0, 1000.0, 100.0, step=10.0)
-    
-    # NEW: PUE Input (replaces DC Aux %)
-    st.markdown("📊 **Power Usage Effectiveness (PUE)**")
-    pue = st.slider(
-        "Data Center PUE", 
-        1.05, 2.00, 
-        pue_defaults[dc_type], 
-        0.05,
-        help="PUE = Total Facility Power / IT Equipment Power. Industry standard metric."
-    )
-    
-    # Show breakdown
+    with st.expander("⚙️ PUE & Load Dynamics", expanded=False):
+        # Defaults inteligentes por tipo
+        pue_defaults = {"AI Factory (Training)": 1.15, "AI Factory (Inference)": 1.20, "Hyperscale Standard": 1.25}
+        def_pue = pue_defaults.get(dc_type, 1.4)
+        
+        pue = st.slider("Design PUE", 1.05, 2.00, def_pue, 0.05)
+        
+        c_dyn1, c_dyn2 = st.columns(2)
+        load_step_pct = c_dyn1.number_input("Max Step (%)", 0.0, 100.0, 40.0 if "AI" in dc_type else 20.0)
+        spinning_res_pct = c_dyn2.number_input("Spinning Res (%)", 0.0, 100.0, 20.0)
+        
+        # Perfil Anual
+        st.markdown("**Annual Profile:**")
+        capacity_factor = st.slider("Capacity Factor", 0.3, 1.0, 0.90)
+        peak_avg_ratio = st.slider("Peak/Avg Ratio", 1.0, 2.0, 1.15)
+        load_ramp_req = st.number_input("Ramp Req (MW/s)", 0.1, 10.0, 3.0 if "AI" in dc_type else 1.0)
+
+    # Cálculos intermedios para visualización
     p_total_dc = p_it * pue
-    p_aux = p_total_dc - p_it
-    
-    with st.expander("ℹ️ PUE Breakdown"):
-        st.write(f"**IT Load:** {p_it:.1f} MW")
-        st.write(f"**Auxiliary Load:** {p_aux:.1f} MW ({(pue-1)*100:.1f}% of IT)")
-        st.write(f"**Total DC Load:** {p_total_dc:.1f} MW")
-        st.caption("Auxiliary = Cooling + UPS losses + Lighting + Network")
-    
-    # ===== LOAD PROFILE SECTION =====
-    st.markdown("📊 **Annual Load Profile**")
-    
-    # 1. Definimos los valores típicos por tipo de Data Center
-    load_profiles = {
-        "AI Factory (Training)": {
-            "capacity_factor": 0.96,
-            "peak_avg_ratio": 1.08,
-            "ramp_rate": 5.0,   # <--- NUEVO: Muy Agresivo (Checkpointing)
-            "description": "Continuous 24/7 training runs"
-        },
-        "AI Factory (Inference)": {
-            "capacity_factor": 0.85,
-            "peak_avg_ratio": 1.25,
-            "ramp_rate": 3.0,   # <--- NUEVO: Alta variabilidad
-            "description": "Variable inference loads with peaks"
-        },
-        "Hyperscale Standard": {
-            "capacity_factor": 0.75,
-            "peak_avg_ratio": 1.20,
-            "ramp_rate": 1.5,   # <--- NUEVO: Estándar
-            "description": "Mixed workloads, diurnal patterns"
-        },
-        "Colocation": {
-            "capacity_factor": 0.65,
-            "peak_avg_ratio": 1.35,
-            "ramp_rate": 0.5,   # <--- NUEVO: Bajo (Cargas lentas)
-            "description": "Multi-tenant, business hours peaks"
-        },
-        "Edge Computing": {
-            "capacity_factor": 0.50,
-            "peak_avg_ratio": 1.50,
-            "ramp_rate": 2.0,   # <--- NUEVO: Volátil
-            "description": "Highly variable local demand"
-        }
-    }
-    
-    profile = load_profiles[dc_type]
-    
-    # Sliders existentes...
-    col_cf1, col_cf2 = st.columns(2)
-    capacity_factor = col_cf1.slider("Capacity Factor (%)", 30.0, 100.0, profile["capacity_factor"]*100, 1.0) / 100.0
-    peak_avg_ratio = col_cf2.slider("Peak/Avg Ratio", 1.0, 2.0, profile["peak_avg_ratio"], 0.05)
-    
-    # --- NUEVO INPUT DE RAMPA ---
-    load_ramp_req = st.number_input(
-        "Load Ramp Rate Req (MW/s)",
-        min_value=0.1, max_value=20.0,
-        value=profile["ramp_rate"], # Toma el valor default del diccionario
-        step=0.1,
-        help="Velocidad de cambio de carga. AI = 3-5 MW/s (requiere BESS grande), Colocation = 0.5 MW/s."
-    )
-    # ---------------------------
-    
-    # Calculate loads
     p_total_avg = p_total_dc * capacity_factor
     p_total_peak = p_total_dc * peak_avg_ratio
     
-    st.info(f"💡 **Load Analysis:**\n"
-            f"- Avg: **{p_total_avg:.1f} MW** | Peak: **{p_total_peak:.1f} MW**\n"
-            f"- Effective Hours/Year: **{8760*capacity_factor:.0f} hrs**")
-    
-    avail_req = st.number_input("Required Availability (%)", 90.0, 99.99999, 99.99, format="%.5f")
-    col_req1, col_req2 = st.columns(2)
-    
-    # 1. Fluctuación FÍSICA de la carga (Lo que la carga hace)
-    load_step_pct = col_req1.number_input(
-        "Max Load Step / Fluctuation (%)", 
-        0.0, 100.0, 
-        def_step_load if is_ai else 25.0,
-        help="La fluctuación transitoria máxima (ej. AI Checkpointing = 50-80%). Define el tamaño del BESS para estabilidad."
-    )
-    
-    # 2. Política de RESERVA (Lo que queremos guardar)
-    spinning_res_pct = col_req2.number_input(
-        "Spinning Reserve Target (%)", 
-        0.0, 100.0, 
-        20.0, # Default más bajo porque ahora distinguimos el golpe
-        help="Reserva rodante deseada en generadores (N+X). Puede ser menor que el Step si usas BESS."
-    )
-    
-    # ===== NEW: FOOTPRINT CONSTRAINTS =====
-    st.markdown("📐 **Site Constraints**")
-    enable_footprint_limit = st.checkbox("Enable Footprint Limit", value=False)
-    
-    if enable_footprint_limit:
-        area_unit_sel = st.radio("Area Unit", ["m²", "Acres", "Hectares"], horizontal=True)
-        
-        if area_unit_sel == "m²":
-            max_area_input = st.number_input("Max Available Area (m²)", 100.0, 500000.0, 50000.0, step=1000.0)
-            max_area_m2 = max_area_input
-        elif area_unit_sel == "Acres":
-            max_area_input = st.number_input("Max Available Area (Acres)", 0.1, 100.0, 12.0, step=0.5)
-            max_area_m2 = max_area_input / 0.000247105
-        else:  # Hectares
-            max_area_input = st.number_input("Max Available Area (Ha)", 0.1, 50.0, 5.0, step=0.5)
-            max_area_m2 = max_area_input * 10000
-    else:
-        max_area_m2 = 999999999  # No limit
-    
-    volt_mode = st.radio("Connection Voltage", ["Auto-Recommend", "Manual"], horizontal=True)
-    manual_voltage_kv = 0.0
-    if volt_mode == "Manual":
-        voltage_option = st.selectbox("Select Voltage Level", [
-            "4.16 kV (Low Voltage - Small DCs)",
-            "13.8 kV (Medium Voltage - Standard)",
-            "34.5 kV (High MV - Large Off-Grid DCs)",
-            "69 kV (Sub-Transmission - Very Large)",
-            "Custom"
-        ])
-        
-        voltage_map = {
-            "4.16 kV (Low Voltage - Small DCs)": 4.16,
-            "13.8 kV (Medium Voltage - Standard)": 13.8,
-            "34.5 kV (High MV - Large Off-Grid DCs)": 34.5,
-            "69 kV (Sub-Transmission - Very Large)": 69.0,
-        }
-        
-        if voltage_option == "Custom":
-            manual_voltage_kv = st.number_input("Custom Voltage (kV)", 0.4, 230.0, 13.8, step=0.1)
-        else:
-            manual_voltage_kv = voltage_map[voltage_option]
-            st.caption(f"✅ Selected: {manual_voltage_kv} kV")
-    
-    st.markdown("🌍 **Site Environment**")
-    derate_mode = st.radio("Derate Mode", ["Auto-Calculate", "Manual"], horizontal=True)
-    
-    if derate_mode == "Auto-Calculate":
-        c_env1, c_env2 = st.columns(2)
-        if is_imperial:
-            site_temp_f = c_env1.number_input(f"Ambient Temp ({u_temp})", 32, 130, 77)
-            site_temp_c = (site_temp_f - 32) * 5/9
-        else:
-            site_temp_c = c_env1.number_input(f"Ambient Temp ({u_temp})", 0, 55, 45) # <--- Default ajustado para prueba
-        
-        if is_imperial:
-            site_alt_ft = c_env2.number_input(f"Altitude ({u_dist})", 0, 15000, 0, step=100)
-            site_alt_m = site_alt_ft * 0.3048
-        else:
-            site_alt_m = c_env2.number_input(f"Altitude ({u_dist})", 0, 5000, 4000, step=50) # <--- Rango ampliado a 5000m
-        
-        methane_number = st.slider("Gas Methane Number", 50, 100, 80)
-        
-        # --- CORRECCIÓN MATEMÁTICA ---
-        # 1. Temperatura: 1% por cada 1°C arriba de 25°C
-        temp_derate = 1.0 - max(0, (site_temp_c - 25) * 0.01)
-        
-        # 2. Altitud: 1% por cada 100 metros (0.0001 por metro)
-        # ANTES (ERROR): alt_derate = 1.0 - (site_alt_m / 300) 
-        alt_derate = 1.0 - (site_alt_m * 0.0001)
-        
-        # 3. Combustible
-        fuel_derate = 1.0 if methane_number >= 70 else 0.95
-        
-        # 4. CÁLCULO FINAL SEGURO
-        # Usamos max(0.1, ...) para asegurar que NUNCA sea 0 o negativo, 
-        # incluso si alguien pone 15,000 metros de altura.
-        derate_factor_calc = max(0.1, temp_derate * alt_derate * fuel_derate)
-        # -----------------------------
-    else:
-        derate_factor_calc = st.slider("Manual Derate Factor", 0.5, 1.0, 0.9, 0.01)
-        site_temp_c = 25
-        site_alt_m = 0
-        methane_number = 80
+    st.info(f"Avg Load: **{p_total_avg:.1f} MW** | Peak: **{p_total_peak:.1f} MW**")
 
     # -------------------------------------------------------------------------
-    # GROUP 2: TECHNOLOGY SOLUTION
+    # 2. SITIO (SITE CONDITIONS)
     # -------------------------------------------------------------------------
-    st.header("2. Technology Solution")
+    st.header("2. Site Conditions")
     
-    st.markdown("⚙️ **Generation Technology**")
-    gen_filter = st.multiselect(
-        "Technology Filter", 
-        ["High Speed", "Medium Speed", "Gas Turbine"],
-        default=["High Speed", "Medium Speed"]
-    )
-    
-    use_bess = st.checkbox("Include BESS (Battery Energy Storage)", value=def_use_bess)
-    
-    bess_strategy = "Hybrid (Balanced)"  # Default
-    bess_reliability_enabled = False
-    
-    if use_bess:
-        st.markdown("🔋 **BESS Strategy**")
-        bess_strategy = st.radio(
-            "Sizing Mode",
-            [
-                "Transient Only",
-                "Hybrid (Balanced)",
-                "Reliability Priority"
-            ],
-            index=1,  # Default to Hybrid
-            help="Transient: Peak shaving + step load only\n"
-                 "Hybrid: Also reduces genset redundancy (best NPV)\n"
-                 "Reliability: Maximum BESS, minimum gensets"
-        )
+    with st.expander("🌍 Ambient & Constraints", expanded=True):
+        derate_mode = st.radio("Derate Mode", ["Auto-Calculate", "Manual"], horizontal=True, label_visibility="collapsed")
         
-        bess_reliability_enabled = bess_strategy != "Transient Only"
+        if derate_mode == "Auto-Calculate":
+            c_site1, c_site2 = st.columns(2)
+            if is_imperial:
+                site_temp_f = c_site1.number_input(f"Temp ({u_temp})", 32, 130, 95)
+                site_alt_ft = c_site2.number_input(f"Alt ({u_dist})", 0, 10000, 300)
+                site_temp_c = (site_temp_f - 32) * 5/9
+                site_alt_m = site_alt_ft * 0.3048
+            else:
+                site_temp_c = c_site1.number_input(f"Temp ({u_temp})", 0, 55, 35)
+                site_alt_m = c_site2.number_input(f"Alt ({u_dist})", 0, 3000, 100)
+            
+            methane_number = st.slider("Gas Methane Number (MN)", 30, 100, 80)
+            
+            # Cálculo de Derateo
+            temp_derate = 1.0 - max(0, (site_temp_c - 25) * 0.01)
+            alt_derate = 1.0 - max(0, (site_alt_m - 100) * 0.0001)
+            fuel_derate = 1.0 if methane_number >= 70 else 0.95
+            derate_factor_calc = max(0.1, temp_derate * alt_derate * fuel_derate)
+        else:
+            derate_factor_calc = st.slider("Manual Derate Factor", 0.1, 1.0, 0.9)
+            site_temp_c = 25; site_alt_m = 0; methane_number = 80 # Defaults
+            
+        st.caption(f"📉 **Site Factor: {derate_factor_calc:.1%}**")
         
-        if bess_reliability_enabled:
-            st.caption("💡 BESS will provide backup power to reduce genset count")
-    
-    enable_black_start = st.checkbox("Enable Black Start Capability", value=False)
-    
-    include_chp = st.checkbox("Include Tri-Generation (CHP)", value=False)
-    
-    # Allow manual selection even with CHP (to test engineering logic)
-    cooling_method = st.selectbox("Cooling Method", ["Air-Cooled", "Water-Cooled"])
-    
-    st.markdown("⛽ **Fuel Infrastructure**")
-    fuel_mode = st.radio("Primary Fuel", ["Pipeline Gas", "LNG", "Dual-Fuel"], horizontal=True)
-    is_lng_primary = "LNG" in fuel_mode
-    has_lng_storage = fuel_mode in ["LNG", "Dual-Fuel"]
-    
-    if has_lng_storage:
-        lng_days = st.number_input("LNG Storage (Days)", 1, 90, 7)
-    else:
-        lng_days = 0
-        dist_gas_main_km = st.number_input("Distance to Gas Main (km)", 0.1, 100.0, 1.0)
-        dist_gas_main_m = dist_gas_main_km * 1000
+        # Area Constraint
+        enable_footprint_limit = st.checkbox("Limit Area?")
+        max_area_m2 = 999999999
+        if enable_footprint_limit:
+            max_area_input = st.number_input(f"Max Area ({u_area})", 100, 100000, 10000)
+            if is_imperial: max_area_m2 = max_area_input / 10.764
+            else: max_area_m2 = max_area_input
 
     # -------------------------------------------------------------------------
-    # GROUP 3: ECONOMICS - ENHANCED
+    # 3. TECNOLOGÍA (TECH)
     # -------------------------------------------------------------------------
-    st.header("3. Economics & ROI")
+    st.header("3. Technology")
     
-    st.markdown("💰 **Energy Pricing**")
+    gen_filter = st.multiselect("Tech Filter", ["High Speed", "Medium Speed", "Gas Turbine"], default=["High Speed", "Medium Speed"])
     
-    # Gas pricing with transport
-    col_g1, col_g2 = st.columns(2)
-    gas_price_wellhead = col_g1.number_input("Gas Price - Wellhead ($/MMBtu)", 0.5, 30.0, 4.0, step=0.5)
-    gas_transport = col_g2.number_input("Pipeline Transport ($/MMBtu)", 0.0, 5.0, 0.5, step=0.1)
+    with st.expander("🔋 BESS & Options", expanded=False):
+        use_bess = st.checkbox("Include BESS", value=("AI" in dc_type))
+        bess_strategy = "Transient Only"
+        if use_bess:
+            bess_strategy = st.radio("Strategy", ["Transient Only", "Hybrid (Balanced)", "Reliability Priority"], index=1)
+            
+        enable_black_start = st.checkbox("Black Start", value=True)
+        include_chp = st.checkbox("Include Tri-Gen (CHP)", value=False)
+        cooling_method = st.selectbox("Cooling", ["Air-Cooled", "Water-Cooled"])
+        
+        # Fuel
+        fuel_mode = st.radio("Fuel", ["Pipeline Gas", "LNG", "Dual-Fuel"])
+        is_lng_primary = "LNG" in fuel_mode
+        has_lng_storage = fuel_mode in ["LNG", "Dual-Fuel"]
+        lng_days = 7 if has_lng_storage else 0
+        dist_gas_main_m = 1000
+
+    # Voltaje
+    with st.expander("⚡ Electrical"):
+        volt_mode = st.radio("Voltage", ["Auto-Recommend", "Manual"], horizontal=True)
+        manual_voltage_kv = 13.8
+        if volt_mode == "Manual":
+            manual_voltage_kv = st.number_input("KV", 0.4, 69.0, 13.8)
+
+    # -------------------------------------------------------------------------
+    # 4. ECONOMÍA (ECONOMICS)
+    # -------------------------------------------------------------------------
+    st.header("4. Economics")
     
-    if is_lng_primary:
-        lng_regasification = st.number_input("LNG Regasification ($/MMBtu)", 0.5, 3.0, 1.5, step=0.1)
-        lng_transport = st.number_input("LNG Shipping ($/MMBtu)", 1.0, 5.0, 3.0, step=0.5)
-    else:
-        lng_regasification = 0
-        lng_transport = 0
+    c_eco1, c_eco2 = st.columns(2)
+    gas_price_wellhead = c_eco1.number_input("Gas ($/MMBtu)", 0.5, 20.0, 4.0)
+    gas_transport = c_eco2.number_input("Transp ($)", 0.0, 5.0, 0.5)
+    total_gas_price = gas_price_wellhead + gas_transport
     
-    total_gas_price = gas_price_wellhead + gas_transport + lng_regasification + lng_transport
-    st.info(f"**Total Gas Cost:** ${total_gas_price:.2f}/MMBtu")
+    benchmark_price = st.number_input("Grid Price ($/kWh)", 0.05, 0.50, 0.12)
     
-    benchmark_price = st.number_input("Benchmark Electricity ($/kWh)", 0.01, 0.50, 0.12, step=0.01)
-    
-    # Carbon pricing
-    st.markdown("🌍 **Carbon Pricing**")
-    carbon_scenario = st.selectbox("Carbon Price Scenario", [
-        "None (Current 2026)",
-        "California Cap-and-Trade",
-        "EU ETS",
-        "Federal Projected 2030",
-        "High Case (IEA Net Zero)"
-    ])
-    
-    carbon_prices = {
-        "None (Current 2026)": 0,
-        "California Cap-and-Trade": 35,
-        "EU ETS": 85,
-        "Federal Projected 2030": 50,
-        "High Case (IEA Net Zero)": 150
-    }
-    
-    carbon_price_per_ton = carbon_prices[carbon_scenario]
-    
-    if carbon_price_per_ton > 0:
-        st.info(f"💨 **Carbon Price:** ${carbon_price_per_ton}/ton CO₂")
-    
-    # Financial parameters
-    c_fin1, c_fin2 = st.columns(2)
-    wacc = c_fin1.number_input("WACC (%)", 1.0, 20.0, 8.0, step=0.5) / 100
-    project_years = c_fin2.number_input("Project Life (Years)", 10, 30, 20, step=5)
-    
-    # Tax incentives
-    st.markdown("💸 **Tax Incentives & Depreciation**")
-    enable_itc = st.checkbox("Include ITC (30% for CHP)", value=include_chp)
-    enable_ptc = st.checkbox("Include PTC ($0.013/kWh, 10yr)", value=False)
-    enable_depreciation = st.checkbox("Include MACRS Depreciation", value=True)
-    
-    # Regional costs
-    st.markdown("📍 **Regional Adjustments**")
-    region = st.selectbox("Region", [
-        "US - Gulf Coast", "US - Northeast", "US - West Coast", "US - Midwest",
-        "Europe - Western", "Europe - Eastern", "Middle East", "Asia Pacific",
-        "Latin America", "Africa"
-    ])
-    
-    regional_multipliers = {
-        "US - Gulf Coast": 1.0,
-        "US - Northeast": 1.25,
-        "US - West Coast": 1.30,
-        "US - Midwest": 1.05,
-        "Europe - Western": 1.35,
-        "Europe - Eastern": 0.90,
-        "Middle East": 1.10,
-        "Asia Pacific": 0.85,
-        "Latin America": 0.95,
-        "Africa": 1.15
-    }
-    regional_mult = regional_multipliers[region]
-    
-    # LCOE Target
-    enable_lcoe_target = st.checkbox("Enable LCOE Target Mode", value=False)
-    target_lcoe = 0.0
-    if enable_lcoe_target:
-        target_lcoe = st.number_input("Target LCOE ($/kWh)", 0.01, 0.50, 0.08, step=0.005)
+    with st.expander("💰 Financial Specs", expanded=False):
+        wacc = st.number_input("WACC (%)", 1.0, 15.0, 8.0) / 100
+        project_years = st.number_input("Years", 5, 30, 20)
+        
+        enable_itc = st.checkbox("ITC (30%)", value=include_chp)
+        enable_ptc = st.checkbox("PTC", value=False)
+        enable_depreciation = st.checkbox("MACRS", value=True)
+        
+        region = st.selectbox("Region", ["US - Gulf Coast", "Europe - Western", "Latin America", "Asia Pacific"])
+        regional_multipliers = {"US - Gulf Coast": 1.0, "Europe - Western": 1.35, "Latin America": 0.95, "Asia Pacific": 0.85}
+        regional_mult = regional_multipliers.get(region, 1.0)
+        
+        carbon_price_per_ton = st.number_input("Carbon Price ($/ton)", 0, 200, 0)
+        
+        enable_lcoe_target = st.checkbox("Target LCOE")
+        target_lcoe = 0.08
+        if enable_lcoe_target:
+            target_lcoe = st.number_input("Target ($/kWh)", 0.05, 0.30, 0.08)
 
 # ==============================================================================
 # 3. GENERATOR SELECTION & FLEET OPTIMIZATION
@@ -3250,4 +3025,5 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
