@@ -679,9 +679,15 @@ with st.sidebar:
     
     with st.expander("🔋 BESS & Options", expanded=False):
         use_bess = st.checkbox("Include BESS", value=("AI" in dc_type))
+        
+        # --- CORRECCIÓN: Definir variables por defecto para evitar NameError ---
         bess_strategy = "Transient Only"
+        bess_reliability_enabled = False 
+        
         if use_bess:
             bess_strategy = st.radio("Strategy", ["Transient Only", "Hybrid (Balanced)", "Reliability Priority"], index=1)
+            # Definimos la variable crítica aquí
+            bess_reliability_enabled = bess_strategy != "Transient Only"
             
         enable_black_start = st.checkbox("Black Start", value=True)
         include_chp = st.checkbox("Include Tri-Gen (CHP)", value=False)
@@ -693,14 +699,6 @@ with st.sidebar:
         has_lng_storage = fuel_mode in ["LNG", "Dual-Fuel"]
         lng_days = 7 if has_lng_storage else 0
         dist_gas_main_m = 1000
-
-    # Voltaje
-    with st.expander("⚡ Electrical"):
-        volt_mode = st.radio("Voltage", ["Auto-Recommend", "Manual"], horizontal=True)
-        manual_voltage_kv = 13.8
-        if volt_mode == "Manual":
-            manual_voltage_kv = st.number_input("KV", 0.4, 69.0, 13.8)
-
     # -------------------------------------------------------------------------
     # 4. ECONOMÍA (ECONOMICS)
     # -------------------------------------------------------------------------
@@ -3042,6 +3040,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
