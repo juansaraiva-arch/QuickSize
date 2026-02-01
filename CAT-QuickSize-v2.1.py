@@ -580,6 +580,9 @@ with st.sidebar:
     # -------------------------------------------------------------------------
     # 1. PERFIL DE CARGA (LOAD PROFILE)
     # -------------------------------------------------------------------------
+    # -------------------------------------------------------------------------
+    # 1. PERFIL DE CARGA (LOAD PROFILE)
+    # -------------------------------------------------------------------------
     st.header("1. Load Profile")
     
     dc_type = st.selectbox("Data Center Type", [
@@ -589,6 +592,9 @@ with st.sidebar:
     
     p_it = st.number_input("Critical IT Load (MW)", 1.0, 2000.0, 100.0, step=10.0)
     
+    # --- VARIABLE FALTANTE AGREGADA AQUÍ ---
+    avail_req = st.number_input("Target Availability (%)", 90.0, 99.9999, 99.99, format="%.4f", help="Meta de confiabilidad (Define N+X)")
+    
     with st.expander("⚙️ PUE & Load Dynamics", expanded=False):
         # Defaults inteligentes por tipo
         pue_defaults = {"AI Factory (Training)": 1.15, "AI Factory (Inference)": 1.20, "Hyperscale Standard": 1.25}
@@ -596,9 +602,20 @@ with st.sidebar:
         
         pue = st.slider("Design PUE", 1.05, 2.00, def_pue, 0.05)
         
+        # Alias para compatibilidad con motor
+        pue_input = pue 
+        
         c_dyn1, c_dyn2 = st.columns(2)
         load_step_pct = c_dyn1.number_input("Max Step (%)", 0.0, 100.0, 40.0 if "AI" in dc_type else 20.0)
+        
+        # Alias para compatibilidad
+        step_load_req = load_step_pct 
+        
         spinning_res_pct = c_dyn2.number_input("Spinning Res (%)", 0.0, 100.0, 20.0)
+        
+        # Variables de pérdidas requeridas por el motor (Defaults ocultos)
+        dist_loss_pct = 0.015
+        gen_parasitic_pct = 0.025
         
         # Perfil Anual
         st.markdown("**Annual Profile:**")
@@ -3025,5 +3042,6 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
