@@ -2817,7 +2817,7 @@ with t5:
         ))
         
         styles.add(ParagraphStyle(
-            name='BodyText',
+            name='CustomBody',
             parent=styles['Normal'],
             fontSize=9,
             textColor=HexColor('#333333'),
@@ -2866,7 +2866,7 @@ with t5:
         <br/><br/>
         <b>Key Metrics:</b> LCOE ${lcoe:.4f}/kWh | CAPEX ${initial_capex_sum:.1f}M | Payback {payback_str}
         """
-        story.append(Paragraph(summary_text, styles['BodyText']))
+        story.append(Paragraph(summary_text, styles['CustomBody']))
         story.append(PageBreak())
         
         # =====================================================================
@@ -3172,7 +3172,7 @@ with t5:
         story.append(Spacer(1, 0.25*inch))
         
         if breakeven_gas_price > 0:
-            story.append(Paragraph(f"<b>Breakeven Gas Price:</b> ${breakeven_gas_price:.2f}/MMBtu", styles['BodyText']))
+            story.append(Paragraph(f"<b>Breakeven Gas Price:</b> ${breakeven_gas_price:.2f}/MMBtu", styles['CustomBody']))
         
         story.append(PageBreak())
         
@@ -3217,7 +3217,7 @@ with t5:
         Final system design should be validated by qualified engineers. 
         Caterpillar Inc. makes no warranties regarding accuracy or completeness.
         """
-        story.append(Paragraph(disclaimer_text, styles['BodyText']))
+        story.append(Paragraph(disclaimer_text, styles['CustomBody']))
         
         # Build PDF
         doc.build(story)
