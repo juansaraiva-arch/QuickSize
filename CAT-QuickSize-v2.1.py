@@ -12,7 +12,7 @@ from datetime import datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.lib.colors import HexColor, white, black
+from reportlab.lib.colors import HexColor, white
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, 
     PageBreak, KeepTogether
@@ -20,156 +20,7 @@ from reportlab.platypus import (
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(
-    page_title="CAT Size Solution", 
-    page_icon="⚡", 
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# ==============================================================================
-# CATERPILLAR BRAND COLORS & CUSTOM CSS
-# ==============================================================================
-CAT_YELLOW = "#FFCD00"      # Primary CAT Yellow
-CAT_BLACK = "#1A1A1A"       # CAT Black
-CAT_DARK_GRAY = "#333333"   # Dark Gray
-CAT_LIGHT_GRAY = "#F5F5F5"  # Light Gray
-CAT_WHITE = "#FFFFFF"       # White
-CAT_SAFETY_YELLOW = "#FFE135"  # Safety Yellow (lighter)
-CAT_CHARCOAL = "#2D2D2D"    # Charcoal
-
-# Custom CSS for CAT branding
-st.markdown(f"""
-<style>
-    /* Main header styling */
-    .main-header {{
-        background: linear-gradient(90deg, {CAT_BLACK} 0%, {CAT_CHARCOAL} 100%);
-        padding: 1rem 2rem;
-        border-radius: 10px;
-        margin-bottom: 1rem;
-        border-left: 5px solid {CAT_YELLOW};
-    }}
-    .main-header h1 {{
-        color: {CAT_YELLOW} !important;
-        margin: 0;
-        font-weight: 700;
-    }}
-    .main-header p {{
-        color: {CAT_WHITE};
-        margin: 0.5rem 0 0 0;
-        opacity: 0.9;
-    }}
-    
-    /* Sidebar styling */
-    [data-testid="stSidebar"] {{
-        background: linear-gradient(180deg, {CAT_BLACK} 0%, {CAT_CHARCOAL} 100%);
-    }}
-    [data-testid="stSidebar"] .stMarkdown h1,
-    [data-testid="stSidebar"] .stMarkdown h2,
-    [data-testid="stSidebar"] .stMarkdown h3 {{
-        color: {CAT_YELLOW} !important;
-    }}
-    [data-testid="stSidebar"] .stMarkdown p,
-    [data-testid="stSidebar"] .stMarkdown span,
-    [data-testid="stSidebar"] label {{
-        color: {CAT_WHITE} !important;
-    }}
-    
-    /* Primary button styling (CAT Yellow) */
-    .stButton > button[kind="primary"] {{
-        background-color: {CAT_YELLOW} !important;
-        color: {CAT_BLACK} !important;
-        border: none !important;
-        font-weight: 700 !important;
-    }}
-    .stButton > button[kind="primary"]:hover {{
-        background-color: {CAT_SAFETY_YELLOW} !important;
-        color: {CAT_BLACK} !important;
-    }}
-    
-    /* Download button styling */
-    .stDownloadButton > button {{
-        background-color: {CAT_YELLOW} !important;
-        color: {CAT_BLACK} !important;
-        border: none !important;
-        font-weight: 700 !important;
-    }}
-    .stDownloadButton > button:hover {{
-        background-color: {CAT_SAFETY_YELLOW} !important;
-    }}
-    
-    /* Metrics styling */
-    [data-testid="stMetricValue"] {{
-        color: {CAT_BLACK} !important;
-        font-weight: 700;
-    }}
-    
-    /* Tab styling */
-    .stTabs [data-baseweb="tab-list"] {{
-        gap: 8px;
-    }}
-    .stTabs [data-baseweb="tab"] {{
-        background-color: {CAT_LIGHT_GRAY};
-        border-radius: 5px;
-        padding: 10px 20px;
-    }}
-    .stTabs [aria-selected="true"] {{
-        background-color: {CAT_YELLOW} !important;
-        color: {CAT_BLACK} !important;
-        font-weight: 700;
-    }}
-    
-    /* Expander styling */
-    .streamlit-expanderHeader {{
-        background-color: {CAT_LIGHT_GRAY};
-        border-radius: 5px;
-    }}
-    
-    /* Success/Error/Warning boxes */
-    .stSuccess {{
-        background-color: #d4edda;
-        border-left: 4px solid #28a745;
-    }}
-    .stError {{
-        background-color: #f8d7da;
-        border-left: 4px solid #dc3545;
-    }}
-    .stWarning {{
-        background-color: #fff3cd;
-        border-left: 4px solid {CAT_YELLOW};
-    }}
-    
-    /* Footer styling */
-    .cat-footer {{
-        background: {CAT_BLACK};
-        padding: 1rem;
-        border-radius: 5px;
-        margin-top: 2rem;
-        text-align: center;
-    }}
-    .cat-footer p {{
-        color: {CAT_WHITE};
-        margin: 0;
-    }}
-    .cat-footer span {{
-        color: {CAT_YELLOW};
-        font-weight: 700;
-    }}
-    
-    /* PDF Report Section in Sidebar */
-    .pdf-section {{
-        background: linear-gradient(180deg, {CAT_CHARCOAL} 0%, {CAT_BLACK} 100%);
-        padding: 1rem;
-        border-radius: 10px;
-        border: 2px solid {CAT_YELLOW};
-        margin-top: 1rem;
-    }}
-    .pdf-section h3 {{
-        color: {CAT_YELLOW} !important;
-        margin-top: 0;
-    }}
-</style>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="CAT Size Solution", page_icon="⚡", layout="wide")
 
 # ==============================================================================
 # 0. HYBRID DATA LIBRARY - ENHANCED WITH DENSITY & RAMP RATE
@@ -1718,369 +1569,6 @@ else:
     units_running = n_running
 
 # ==============================================================================
-# 📄 PDF REPORT SECTION IN SIDEBAR
-# ==============================================================================
-st.sidebar.markdown("---")
-st.sidebar.markdown(f"""
-<div style="background: linear-gradient(180deg, #2D2D2D 0%, #1A1A1A 100%); 
-            padding: 1rem; border-radius: 10px; border: 2px solid #FFCD00;">
-    <h3 style="color: #FFCD00; margin: 0 0 0.5rem 0;">📄 Export Report</h3>
-</div>
-""", unsafe_allow_html=True)
-
-project_name_pdf = st.sidebar.text_input(
-    "Project Name",
-    value=f"{dc_type} - {p_it:.0f}MW",
-    key="pdf_project_name"
-)
-
-def generate_comprehensive_pdf():
-    """Generate a complete PDF report with CAT branding"""
-    
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(
-        buffer, 
-        pagesize=letter,
-        rightMargin=0.6*inch, 
-        leftMargin=0.6*inch,
-        topMargin=0.6*inch, 
-        bottomMargin=0.6*inch
-    )
-    
-    # CAT Brand Colors
-    CAT_YELLOW_HEX = '#FFCD00'
-    CAT_BLACK_HEX = '#1A1A1A'
-    CAT_GRAY_HEX = '#333333'
-    
-    # Styles
-    styles = getSampleStyleSheet()
-    
-    # Custom styles with CAT branding
-    styles.add(ParagraphStyle(
-        name='CATTitle',
-        parent=styles['Title'],
-        fontSize=24,
-        textColor=HexColor(CAT_BLACK_HEX),
-        spaceAfter=15,
-        alignment=TA_CENTER
-    ))
-    
-    styles.add(ParagraphStyle(
-        name='CATSection',
-        parent=styles['Heading1'],
-        fontSize=12,
-        textColor=HexColor(CAT_BLACK_HEX),
-        spaceBefore=15,
-        spaceAfter=8,
-        backColor=HexColor(CAT_YELLOW_HEX),
-        borderPadding=6
-    ))
-    
-    styles.add(ParagraphStyle(
-        name='CATSubSection',
-        parent=styles['Heading2'],
-        fontSize=11,
-        textColor=HexColor(CAT_GRAY_HEX),
-        spaceBefore=12,
-        spaceAfter=6
-    ))
-    
-    styles.add(ParagraphStyle(
-        name='CATBody',
-        parent=styles['Normal'],
-        fontSize=9,
-        textColor=HexColor(CAT_GRAY_HEX),
-        spaceAfter=6,
-        alignment=TA_JUSTIFY
-    ))
-    
-    story = []
-    
-    # =====================================================================
-    # COVER PAGE WITH CAT BRANDING
-    # =====================================================================
-    story.append(Spacer(1, 0.8*inch))
-    
-    # Yellow header bar simulation
-    header_data = [[Paragraph("<b>⚡ CAT SIZE SOLUTION</b>", 
-                              ParagraphStyle('header', fontSize=20, textColor=HexColor(CAT_BLACK_HEX), alignment=TA_CENTER))]]
-    header_table = Table(header_data, colWidths=[6.5*inch])
-    header_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), HexColor(CAT_YELLOW_HEX)),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('TOPPADDING', (0, 0), (-1, -1), 15),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 15),
-    ]))
-    story.append(header_table)
-    
-    story.append(Spacer(1, 0.3*inch))
-    story.append(Paragraph("Power System Sizing Report", styles['Heading2']))
-    story.append(Spacer(1, 0.4*inch))
-    
-    # Project info
-    cover_data = [
-        ['Project:', project_name_pdf],
-        ['Data Center Type:', dc_type],
-        ['Report Date:', datetime.now().strftime("%B %d, %Y")],
-        ['Region:', region],
-        ['BESS Strategy:', bess_strategy if use_bess else 'No BESS'],
-    ]
-    
-    cover_table = Table(cover_data, colWidths=[1.8*inch, 4.2*inch])
-    cover_table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ('ALIGN', (0, 0), (0, -1), 'RIGHT'),
-        ('TEXTCOLOR', (0, 0), (-1, -1), HexColor(CAT_GRAY_HEX)),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-    ]))
-    story.append(cover_table)
-    story.append(Spacer(1, 0.5*inch))
-    
-    # Executive Summary
-    summary_text = f"""
-    <b>Executive Summary:</b><br/><br/>
-    Power system sizing for <b>{p_it:.0f} MW</b> IT load with <b>PUE {pue:.2f}</b>. 
-    Recommended: <b>{n_total} x {selected_gen}</b> in <b>N+{n_reserve}</b> configuration 
-    achieving <b>{prob_gen*100:.3f}%</b> availability.
-    {'<br/><br/>Includes <b>' + f'{bess_power_total:.1f} MW / {bess_energy_total:.1f} MWh</b> BESS.' if use_bess else ''}
-    <br/><br/><b>Key Metrics:</b> LCOE ${lcoe:.4f}/kWh | CAPEX ${initial_capex_sum:.1f}M | Payback {payback_str}
-    """
-    story.append(Paragraph(summary_text, styles['CATBody']))
-    story.append(PageBreak())
-    
-    # =====================================================================
-    # SECTION 1: LOAD REQUIREMENTS
-    # =====================================================================
-    story.append(Paragraph("1. LOAD REQUIREMENTS", styles['CATSection']))
-    
-    load_data = [
-        ['Parameter', 'Value', 'Unit'],
-        ['Critical IT Load', f'{p_it:.1f}', 'MW'],
-        ['PUE', f'{pue:.2f}', '-'],
-        ['Total DC Load', f'{p_total_dc:.1f}', 'MW'],
-        ['Average Load', f'{p_total_avg:.1f}', 'MW'],
-        ['Peak Load', f'{p_total_peak:.1f}', 'MW'],
-        ['Capacity Factor', f'{capacity_factor*100:.1f}', '%'],
-        ['Step Load Req.', f'{load_step_pct:.0f}', '%'],
-        ['Spinning Reserve', f'{spinning_res_pct:.0f}', '%'],
-    ]
-    
-    load_table = Table(load_data, colWidths=[2.5*inch, 2*inch, 1.5*inch])
-    load_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), HexColor(CAT_BLACK_HEX)),
-        ('TEXTCOLOR', (0, 0), (-1, 0), white),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
-        ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f8f8')]),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-    ]))
-    story.append(load_table)
-    story.append(Spacer(1, 0.2*inch))
-    
-    # =====================================================================
-    # SECTION 2: GENERATOR & FLEET
-    # =====================================================================
-    story.append(Paragraph("2. GENERATOR & FLEET CONFIGURATION", styles['CATSection']))
-    
-    gen_fleet_data = [
-        ['Parameter', 'Value'],
-        ['Generator Model', f"{selected_gen} ({gen_data.get('type', 'N/A')})"],
-        ['ISO Rating', f"{gen_data.get('iso_rating_mw', 0):.2f} MW"],
-        ['Site Rating (Derated)', f"{unit_site_cap:.2f} MW"],
-        ['Derate Factor', f"{derate_factor_calc*100:.1f}%"],
-        ['Efficiency (ISO)', f"{gen_data.get('electrical_efficiency', 0)*100:.1f}%"],
-        ['Fleet Efficiency', f"{fleet_efficiency*100:.2f}%"],
-        ['Running Units (N)', f'{n_running}'],
-        ['Reserve Units (+X)', f'{n_reserve}'],
-        ['Total Fleet', f'{n_total}'],
-        ['Installed Capacity', f'{installed_cap:.1f} MW'],
-        ['Load per Unit', f'{load_per_unit_pct:.1f}%'],
-        ['Achieved Availability', f'{prob_gen*100:.4f}%'],
-    ]
-    
-    gen_table = Table(gen_fleet_data, colWidths=[3*inch, 3*inch])
-    gen_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), HexColor(CAT_BLACK_HEX)),
-        ('TEXTCOLOR', (0, 0), (-1, 0), white),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('ALIGN', (1, 1), (1, -1), 'CENTER'),
-        ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f8f8')]),
-    ]))
-    story.append(gen_table)
-    story.append(Spacer(1, 0.2*inch))
-    
-    # =====================================================================
-    # SECTION 3: SPINNING RESERVE
-    # =====================================================================
-    story.append(Paragraph("3. SPINNING RESERVE ANALYSIS", styles['CATSection']))
-    
-    spin_data = [
-        ['Parameter', 'Value', 'Notes'],
-        ['Reserve Required', f"{selected_config.get('spinning_reserve_mw', 0):.1f} MW", f'{spinning_res_pct:.0f}% policy'],
-        ['From Generators', f"{selected_config.get('spinning_from_gens', 0):.1f} MW", 'Headroom'],
-        ['From BESS', f"{selected_config.get('spinning_from_bess', 0):.1f} MW" if use_bess else 'N/A', 'Instant'],
-    ]
-    
-    spin_table = Table(spin_data, colWidths=[2*inch, 2*inch, 2*inch])
-    spin_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), HexColor(CAT_BLACK_HEX)),
-        ('TEXTCOLOR', (0, 0), (-1, 0), white),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
-        ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f8f8')]),
-    ]))
-    story.append(spin_table)
-    
-    # =====================================================================
-    # SECTION 4: BESS (if applicable)
-    # =====================================================================
-    if use_bess:
-        story.append(Spacer(1, 0.2*inch))
-        story.append(Paragraph("4. BESS SYSTEM", styles['CATSection']))
-        
-        bess_data = [
-            ['Parameter', 'Value'],
-            ['Strategy', bess_strategy],
-            ['Power', f'{bess_power_total:.1f} MW'],
-            ['Energy', f'{bess_energy_total:.1f} MWh'],
-            ['Duration', f'{bess_energy_total/bess_power_total:.1f} hrs' if bess_power_total > 0 else 'N/A'],
-        ]
-        
-        bess_table = Table(bess_data, colWidths=[3*inch, 3*inch])
-        bess_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), HexColor(CAT_BLACK_HEX)),
-            ('TEXTCOLOR', (0, 0), (-1, 0), white),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
-            ('ALIGN', (1, 1), (1, -1), 'CENTER'),
-            ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f8f8')]),
-        ]))
-        story.append(bess_table)
-    
-    story.append(PageBreak())
-    
-    # =====================================================================
-    # SECTION 5: ELECTRICAL & STABILITY
-    # =====================================================================
-    story.append(Paragraph("5. ELECTRICAL PERFORMANCE", styles['CATSection']))
-    
-    elec_data = [
-        ['Parameter', 'Value'],
-        ['Voltage', f'{rec_voltage_kv} kV'],
-        ['Frequency', f'{freq_hz} Hz'],
-        ['Transient Stability', 'PASS ✓' if stability_ok else 'FAIL ✗'],
-        ['Voltage Sag', f'{voltage_sag:.2f}%'],
-        ['Net Efficiency', f'{net_efficiency*100:.2f}%'],
-    ]
-    
-    elec_table = Table(elec_data, colWidths=[3*inch, 3*inch])
-    elec_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), HexColor(CAT_BLACK_HEX)),
-        ('TEXTCOLOR', (0, 0), (-1, 0), white),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('ALIGN', (1, 1), (1, -1), 'CENTER'),
-        ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f8f8')]),
-    ]))
-    story.append(elec_table)
-    story.append(Spacer(1, 0.2*inch))
-    
-    # =====================================================================
-    # SECTION 6: FOOTPRINT & ENVIRONMENTAL
-    # =====================================================================
-    story.append(Paragraph("6. FOOTPRINT & ENVIRONMENTAL", styles['CATSection']))
-    
-    env_data = [
-        ['Parameter', 'Value'],
-        ['Total Footprint', f'{total_area_m2:,.0f} m² ({total_area_m2 * 0.000247105:.2f} acres)'],
-        ['Cooling', 'Tri-Gen (CHP)' if include_chp else cooling_method],
-        ['Actual PUE', f'{pue_actual:.2f}'],
-        ['CO2 (Annual)', f'{co2_ton_yr:,.0f} tons/yr'],
-        ['Carbon Cost', f'${carbon_cost_year/1e6:.2f}M/yr'],
-    ]
-    
-    env_table = Table(env_data, colWidths=[3*inch, 3*inch])
-    env_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), HexColor(CAT_BLACK_HEX)),
-        ('TEXTCOLOR', (0, 0), (-1, 0), white),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('ALIGN', (1, 1), (1, -1), 'CENTER'),
-        ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f8f8')]),
-    ]))
-    story.append(env_table)
-    story.append(Spacer(1, 0.2*inch))
-    
-    # =====================================================================
-    # SECTION 7: FINANCIAL
-    # =====================================================================
-    story.append(Paragraph("7. FINANCIAL ANALYSIS", styles['CATSection']))
-    
-    fin_data = [
-        ['Metric', 'Value'],
-        ['Total CAPEX', f'${initial_capex_sum:.2f}M'],
-        ['LCOE', f'${lcoe:.4f}/kWh'],
-        ['Annual Fuel', f'${fuel_cost_year/1e6:.2f}M'],
-        ['Annual O&M', f'${om_cost_year/1e6:.2f}M'],
-        ['Annual Savings', f'${annual_savings/1e6:.2f}M'],
-        ['NPV', f'${npv/1e6:.2f}M'],
-        ['Payback', payback_str],
-        ['Gas Price', f'${total_gas_price:.2f}/MMBtu'],
-    ]
-    
-    fin_table = Table(fin_data, colWidths=[3*inch, 3*inch])
-    fin_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), HexColor(CAT_BLACK_HEX)),
-        ('TEXTCOLOR', (0, 0), (-1, 0), white),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('ALIGN', (1, 1), (1, -1), 'CENTER'),
-        ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f8f8')]),
-    ]))
-    story.append(fin_table)
-    story.append(Spacer(1, 0.3*inch))
-    
-    # Disclaimer
-    disclaimer = """
-    <b>Disclaimer:</b> This report is preliminary and for planning purposes only. 
-    Final design requires detailed engineering. Caterpillar Inc. makes no warranties 
-    regarding accuracy. © Caterpillar Electric Power 2026.
-    """
-    story.append(Paragraph(disclaimer, styles['CATBody']))
-    
-    # Build PDF
-    doc.build(story)
-    buffer.seek(0)
-    return buffer.getvalue()
-
-# PDF Generation Button
-if st.sidebar.button("📥 Generate PDF Report", type="primary", use_container_width=True):
-    with st.spinner("Generating PDF..."):
-        try:
-            pdf_data = generate_comprehensive_pdf()
-            st.sidebar.success("✅ Ready!")
-            st.sidebar.download_button(
-                label="📄 Download PDF",
-                data=pdf_data,
-                file_name=f"CAT_{project_name_pdf.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
-        except Exception as e:
-            st.sidebar.error(f"Error: {str(e)}")
-
-# ==============================================================================
 # CORRECCIÓN DE EFICIENCIA POR SITIO (NUEVO PARCHE)
 # ==============================================================================
 
@@ -3267,10 +2755,499 @@ with t5:
     )
     st.plotly_chart(fig_sens, use_container_width=True)
 
-# --- FOOTER CON ESTILO CAT ---
-st.markdown(f"""
-<div class="cat-footer">
-    <p><span>⚡ CAT SIZE SOLUTION</span> v3.0 | Next-Gen Data Center Power Solutions</p>
-    <p style="font-size: 0.8rem; opacity: 0.7;">Caterpillar Electric Power | 2026</p>
-</div>
-""", unsafe_allow_html=True)
+    # =========================================================================
+    # 📄 COMPREHENSIVE PDF REPORT GENERATION (ReportLab)
+    # =========================================================================
+    st.markdown("---")
+    st.markdown("## 📄 Export Comprehensive Report")
+    
+    col_exp1, col_exp2 = st.columns([3, 1])
+    
+    with col_exp1:
+        project_name_input = st.text_input(
+            "Project Name", 
+            value=f"{dc_type} - {p_it:.0f}MW Data Center",
+            help="Enter a project name for the report"
+        )
+    
+    def generate_comprehensive_pdf():
+        """Generate a complete PDF report with all sizing results"""
+        
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(
+            buffer, 
+            pagesize=letter,
+            rightMargin=0.6*inch, 
+            leftMargin=0.6*inch,
+            topMargin=0.6*inch, 
+            bottomMargin=0.6*inch
+        )
+        
+        # Styles
+        styles = getSampleStyleSheet()
+        
+        # Custom styles
+        styles.add(ParagraphStyle(
+            name='ReportTitle',
+            parent=styles['Title'],
+            fontSize=22,
+            textColor=HexColor('#1a1a2e'),
+            spaceAfter=15,
+            alignment=TA_CENTER
+        ))
+        
+        styles.add(ParagraphStyle(
+            name='SectionHeader',
+            parent=styles['Heading1'],
+            fontSize=13,
+            textColor=HexColor('#FFFFFF'),
+            spaceBefore=15,
+            spaceAfter=8,
+            backColor=HexColor('#1a1a2e'),
+            borderPadding=6
+        ))
+        
+        styles.add(ParagraphStyle(
+            name='SubSection',
+            parent=styles['Heading2'],
+            fontSize=11,
+            textColor=HexColor('#333333'),
+            spaceBefore=12,
+            spaceAfter=6
+        ))
+        
+        styles.add(ParagraphStyle(
+            name='CustomBody',
+            parent=styles['Normal'],
+            fontSize=9,
+            textColor=HexColor('#333333'),
+            spaceAfter=6,
+            alignment=TA_JUSTIFY
+        ))
+        
+        story = []
+        
+        # =====================================================================
+        # COVER PAGE
+        # =====================================================================
+        story.append(Spacer(1, 1*inch))
+        story.append(Paragraph("⚡ CAT SIZE SOLUTION", styles['ReportTitle']))
+        story.append(Paragraph("Comprehensive Power System Sizing Report", styles['Heading2']))
+        story.append(Spacer(1, 0.4*inch))
+        
+        # Project info
+        cover_data = [
+            ['Project:', project_name_input],
+            ['Data Center Type:', dc_type],
+            ['Report Date:', datetime.now().strftime("%B %d, %Y")],
+            ['Region:', region],
+            ['Generated By:', 'CAT Size Solution v3.0']
+        ]
+        
+        cover_table = Table(cover_data, colWidths=[1.8*inch, 4.2*inch])
+        cover_table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('ALIGN', (0, 0), (0, -1), 'RIGHT'),
+            ('ALIGN', (1, 0), (1, -1), 'LEFT'),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        story.append(cover_table)
+        story.append(Spacer(1, 0.5*inch))
+        
+        # Executive Summary
+        summary_text = f"""
+        <b>Executive Summary:</b><br/><br/>
+        This report presents the power system sizing for a <b>{p_it:.0f} MW</b> IT load data center 
+        with <b>PUE {pue:.2f}</b>. The recommended solution: <b>{n_total} x {selected_gen}</b> 
+        in <b>N+{n_reserve}</b> configuration achieving <b>{prob_gen*100:.3f}%</b> availability.
+        {'<br/><br/>Includes <b>' + f'{bess_power_total:.1f} MW / {bess_energy_total:.1f} MWh</b> BESS for transient support.' if use_bess else ''}
+        <br/><br/>
+        <b>Key Metrics:</b> LCOE ${lcoe:.4f}/kWh | CAPEX ${initial_capex_sum:.1f}M | Payback {payback_str}
+        """
+        story.append(Paragraph(summary_text, styles['CustomBody']))
+        story.append(PageBreak())
+        
+        # =====================================================================
+        # SECTION 1: LOAD REQUIREMENTS
+        # =====================================================================
+        story.append(Paragraph("1. LOAD REQUIREMENTS", styles['SectionHeader']))
+        
+        load_data = [
+            ['Parameter', 'Value', 'Unit'],
+            ['Critical IT Load', f'{p_it:.1f}', 'MW'],
+            ['Power Usage Effectiveness (PUE)', f'{pue:.2f}', '-'],
+            ['Total DC Load (Design)', f'{p_total_dc:.1f}', 'MW'],
+            ['Average Operating Load', f'{p_total_avg:.1f}', 'MW'],
+            ['Peak Load', f'{p_total_peak:.1f}', 'MW'],
+            ['Capacity Factor', f'{capacity_factor*100:.1f}', '%'],
+            ['Required Availability', f'{avail_req:.4f}', '%'],
+            ['Step Load Requirement', f'{load_step_pct:.0f}', '%'],
+            ['Spinning Reserve Policy', f'{spinning_res_pct:.0f}', '%'],
+        ]
+        
+        load_table = Table(load_data, colWidths=[2.8*inch, 2*inch, 1.5*inch])
+        load_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#1a1a2e')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f8f8')]),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
+        ]))
+        story.append(load_table)
+        story.append(Spacer(1, 0.25*inch))
+        
+        # =====================================================================
+        # SECTION 2: GENERATOR SELECTION
+        # =====================================================================
+        story.append(Paragraph("2. GENERATOR SELECTION", styles['SectionHeader']))
+        
+        gen_data_table = [
+            ['Specification', 'Value'],
+            ['Model', selected_gen],
+            ['Type', gen_data.get('type', 'N/A')],
+            ['ISO Rating', f"{gen_data.get('iso_rating_mw', 0):.2f} MW"],
+            ['Site Rating (Derated)', f"{unit_site_cap:.2f} MW"],
+            ['Derate Factor', f"{derate_factor_calc*100:.1f}%"],
+            ['Electrical Efficiency', f"{gen_data.get('electrical_efficiency', 0)*100:.1f}%"],
+            ['Heat Rate (LHV)', f"{gen_data.get('heat_rate_lhv', 0):,.0f} BTU/kWh"],
+            ['Step Load Capability', f"{gen_data.get('step_load_pct', 0):.0f}%"],
+            ['Ramp Rate', f"{gen_data.get('ramp_rate_mw_s', 0):.1f} MW/s"],
+            ['MTBF', f"{gen_data.get('mtbf_hours', 0):,} hours"],
+        ]
+        
+        gen_table = Table(gen_data_table, colWidths=[3*inch, 3.3*inch])
+        gen_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#1a1a2e')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('ALIGN', (1, 1), (1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f8f8')]),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ]))
+        story.append(gen_table)
+        story.append(Spacer(1, 0.25*inch))
+        
+        # =====================================================================
+        # SECTION 3: FLEET CONFIGURATION
+        # =====================================================================
+        story.append(Paragraph("3. FLEET CONFIGURATION", styles['SectionHeader']))
+        
+        fleet_data = [
+            ['Parameter', 'Value'],
+            ['Running Units (N)', f'{n_running}'],
+            ['Reserve Units (+X)', f'{n_reserve}'],
+            ['Total Fleet', f'{n_total}'],
+            ['Installed Capacity', f'{installed_cap:.1f} MW'],
+            ['Load per Unit', f'{load_per_unit_pct:.1f}%'],
+            ['Fleet Efficiency', f'{fleet_efficiency*100:.2f}%'],
+            ['Configuration', f'N+{n_reserve}'],
+            ['Achieved Availability', f'{prob_gen*100:.4f}%'],
+            ['Target Met', 'YES ✓' if target_met else 'NO ✗'],
+        ]
+        
+        fleet_table = Table(fleet_data, colWidths=[3*inch, 3.3*inch])
+        fleet_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#1a1a2e')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('ALIGN', (1, 1), (1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f8f8')]),
+        ]))
+        story.append(fleet_table)
+        story.append(Spacer(1, 0.25*inch))
+        
+        # =====================================================================
+        # SECTION 4: SPINNING RESERVE ANALYSIS
+        # =====================================================================
+        story.append(Paragraph("4. SPINNING RESERVE ANALYSIS", styles['SectionHeader']))
+        
+        spin_data = [
+            ['Parameter', 'Value', 'Notes'],
+            ['Spinning Reserve Required', f"{selected_config.get('spinning_reserve_mw', 0):.1f} MW", f'{spinning_res_pct:.0f}% of avg load'],
+            ['From Generators (Headroom)', f"{selected_config.get('spinning_from_gens', 0):.1f} MW", 'Running units headroom'],
+            ['From BESS', f"{selected_config.get('spinning_from_bess', 0):.1f} MW" if use_bess else 'N/A', 'Instant response'],
+            ['Available Headroom', f"{selected_config.get('headroom_mw', 0):.1f} MW", 'Total spare capacity'],
+        ]
+        
+        spin_table = Table(spin_data, colWidths=[2.3*inch, 1.8*inch, 2.2*inch])
+        spin_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#1a1a2e')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f8f8')]),
+        ]))
+        story.append(spin_table)
+        
+        story.append(PageBreak())
+        
+        # =====================================================================
+        # SECTION 5: CONFIGURATION COMPARISON
+        # =====================================================================
+        if len(reliability_configs) > 1:
+            story.append(Paragraph("5. CONFIGURATION COMPARISON", styles['SectionHeader']))
+            
+            config_header = ['Configuration', 'Fleet', 'BESS (MW/MWh)', 'Load/Unit', 'Efficiency', 'Availability']
+            config_rows = [config_header]
+            
+            for cfg in reliability_configs:
+                bess_str = f"{cfg.get('bess_mw', 0):.0f}/{cfg.get('bess_mwh', 0):.0f}" if cfg.get('bess_mw', 0) > 0 else "None"
+                config_rows.append([
+                    cfg.get('name', 'N/A'),
+                    f"{cfg.get('n_running', 0)}+{cfg.get('n_reserve', 0)}",
+                    bess_str,
+                    f"{cfg.get('load_pct', 0):.1f}%",
+                    f"{cfg.get('efficiency', 0)*100:.1f}%",
+                    f"{cfg.get('availability', 0)*100:.3f}%"
+                ])
+            
+            config_table = Table(config_rows, colWidths=[1.4*inch, 0.7*inch, 1*inch, 0.9*inch, 0.9*inch, 1*inch])
+            config_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), HexColor('#1a1a2e')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f8f8')]),
+            ]))
+            story.append(config_table)
+            story.append(Spacer(1, 0.25*inch))
+        
+        # =====================================================================
+        # SECTION 6: BESS SYSTEM
+        # =====================================================================
+        if use_bess:
+            story.append(Paragraph("6. BESS SYSTEM", styles['SectionHeader']))
+            
+            bess_data = [
+                ['Parameter', 'Value'],
+                ['Strategy', bess_strategy],
+                ['Power Capacity', f'{bess_power_total:.1f} MW'],
+                ['Energy Capacity', f'{bess_energy_total:.1f} MWh'],
+                ['Duration', f'{bess_energy_total/bess_power_total:.1f} hours' if bess_power_total > 0 else 'N/A'],
+                ['Step Load Support', f"{bess_breakdown.get('step_support', 0):.1f} MW"],
+                ['Peak Shaving', f"{bess_breakdown.get('peak_shaving', 0):.1f} MW"],
+                ['Spinning Reserve', f"{bess_breakdown.get('spinning_reserve', 0):.1f} MW"],
+            ]
+            
+            bess_table = Table(bess_data, colWidths=[3*inch, 3.3*inch])
+            bess_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), HexColor('#1a1a2e')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('ALIGN', (1, 1), (1, -1), 'CENTER'),
+                ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f8f8')]),
+            ]))
+            story.append(bess_table)
+            story.append(Spacer(1, 0.25*inch))
+        
+        # =====================================================================
+        # SECTION 7: ELECTRICAL PERFORMANCE
+        # =====================================================================
+        story.append(Paragraph("7. ELECTRICAL PERFORMANCE", styles['SectionHeader'] if use_bess else styles['SectionHeader']))
+        
+        elec_data = [
+            ['Parameter', 'Value'],
+            ['Connection Voltage', f'{rec_voltage_kv} kV'],
+            ['System Frequency', f'{freq_hz} Hz'],
+            ['Transient Stability', 'PASS ✓' if stability_ok else 'FAIL ✗'],
+            ['Voltage Sag', f'{voltage_sag:.2f}% (Limit: 10%)'],
+            ['Net Efficiency', f'{net_efficiency*100:.2f}%'],
+            ['Heat Rate (HHV)', f'{heat_rate_hhv_mj:.2f} MJ/kWh'],
+        ]
+        
+        elec_table = Table(elec_data, colWidths=[3*inch, 3.3*inch])
+        elec_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#1a1a2e')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('ALIGN', (1, 1), (1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f8f8')]),
+        ]))
+        story.append(elec_table)
+        story.append(Spacer(1, 0.25*inch))
+        
+        # =====================================================================
+        # SECTION 8: FOOTPRINT
+        # =====================================================================
+        story.append(Paragraph("8. FOOTPRINT & INFRASTRUCTURE", styles['SectionHeader']))
+        
+        foot_data = [
+            ['Component', 'Area (m²)', 'Area (Acres)'],
+            ['Generators', f'{area_gen:,.0f}', f'{area_gen * 0.000247105:.2f}'],
+            ['BESS', f'{area_bess:,.0f}' if use_bess else 'N/A', f'{area_bess * 0.000247105:.2f}' if use_bess else 'N/A'],
+            ['Total Site', f'{total_area_m2:,.0f}', f'{total_area_m2 * 0.000247105:.2f}'],
+        ]
+        
+        foot_table = Table(foot_data, colWidths=[2.3*inch, 2*inch, 2*inch])
+        foot_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#1a1a2e')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f8f8')]),
+        ]))
+        story.append(foot_table)
+        
+        story.append(PageBreak())
+        
+        # =====================================================================
+        # SECTION 9: ENVIRONMENTAL
+        # =====================================================================
+        story.append(Paragraph("9. ENVIRONMENTAL PERFORMANCE", styles['SectionHeader']))
+        
+        env_data = [
+            ['Parameter', 'Value', 'Unit'],
+            ['NOx Emissions', f'{nox_lb_hr:.2f}', 'lb/hr'],
+            ['CO Emissions', f'{co_lb_hr:.2f}', 'lb/hr'],
+            ['CO2 Emissions (Annual)', f'{co2_ton_yr:,.0f}', 'tons/yr'],
+            ['Carbon Cost', f'${carbon_cost_year/1e6:.2f}M', '/year'],
+            ['Cooling Method', 'Tri-Gen (CHP)' if include_chp else cooling_method, '-'],
+            ['Actual PUE', f'{pue_actual:.2f}', '-'],
+        ]
+        
+        env_table = Table(env_data, colWidths=[2.5*inch, 2*inch, 1.8*inch])
+        env_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#1a1a2e')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f8f8')]),
+        ]))
+        story.append(env_table)
+        story.append(Spacer(1, 0.25*inch))
+        
+        # =====================================================================
+        # SECTION 10: FINANCIAL ANALYSIS
+        # =====================================================================
+        story.append(Paragraph("10. FINANCIAL ANALYSIS", styles['SectionHeader']))
+        
+        fin_data = [
+            ['Metric', 'Value'],
+            ['Total CAPEX', f'${initial_capex_sum:.2f}M'],
+            ['LCOE', f'${lcoe:.4f}/kWh'],
+            ['Annual Fuel Cost', f'${fuel_cost_year/1e6:.2f}M'],
+            ['Annual O&M Cost', f'${om_cost_year/1e6:.2f}M'],
+            ['Annual Savings vs Grid', f'${annual_savings/1e6:.2f}M'],
+            ['NPV (Project Life)', f'${npv/1e6:.2f}M'],
+            ['Simple Payback', payback_str],
+            ['WACC', f'{wacc*100:.1f}%'],
+            ['Project Life', f'{project_years} years'],
+            ['Gas Price', f'${total_gas_price:.2f}/MMBtu'],
+            ['Benchmark Electricity', f'${benchmark_price:.3f}/kWh'],
+        ]
+        
+        fin_table = Table(fin_data, colWidths=[3*inch, 3.3*inch])
+        fin_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#1a1a2e')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('ALIGN', (1, 1), (1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f8f8')]),
+        ]))
+        story.append(fin_table)
+        story.append(Spacer(1, 0.25*inch))
+        
+        if breakeven_gas_price > 0:
+            story.append(Paragraph(f"<b>Breakeven Gas Price:</b> ${breakeven_gas_price:.2f}/MMBtu", styles['CustomBody']))
+        
+        story.append(PageBreak())
+        
+        # =====================================================================
+        # SECTION 11: CAPEX BREAKDOWN
+        # =====================================================================
+        story.append(Paragraph("11. CAPEX BREAKDOWN", styles['SectionHeader']))
+        
+        capex_rows = [['Item', 'Cost (M USD)']]
+        for _, row in df_capex.iterrows():
+            capex_rows.append([row['Item'], f"${row['Cost (M USD)']:.2f}M"])
+        capex_rows.append(['TOTAL', f"${initial_capex_sum:.2f}M"])
+        
+        capex_table = Table(capex_rows, colWidths=[4*inch, 2.3*inch])
+        capex_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#1a1a2e')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+            ('BACKGROUND', (0, -1), (-1, -1), HexColor('#e8e8e8')),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+            ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#cccccc')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -2), [white, HexColor('#f8f8f8')]),
+        ]))
+        story.append(capex_table)
+        story.append(Spacer(1, 0.4*inch))
+        
+        # =====================================================================
+        # DISCLAIMER
+        # =====================================================================
+        story.append(Paragraph("NOTES & DISCLAIMER", styles['SectionHeader']))
+        
+        disclaimer_text = """
+        <b>Important Notes:</b><br/>
+        1. This analysis is preliminary and for planning purposes only.<br/>
+        2. Actual equipment selection requires detailed engineering studies.<br/>
+        3. Site conditions may affect performance.<br/>
+        4. Financial projections based on current market assumptions.<br/><br/>
+        
+        <b>Disclaimer:</b> This report is provided for informational purposes only. 
+        Final system design should be validated by qualified engineers. 
+        Caterpillar Inc. makes no warranties regarding accuracy or completeness.
+        """
+        story.append(Paragraph(disclaimer_text, styles['CustomBody']))
+        
+        # Build PDF
+        doc.build(story)
+        buffer.seek(0)
+        return buffer.getvalue()
+    
+    with col_exp2:
+        st.write("")
+        if st.button("📥 Generate PDF Report", type="primary", use_container_width=True):
+            with st.spinner("Generating comprehensive PDF..."):
+                try:
+                    pdf_data = generate_comprehensive_pdf()
+                    st.success("✅ PDF generated!")
+                    
+                    st.download_button(
+                        label="📄 Download Report",
+                        data=pdf_data,
+                        file_name=f"CAT_SizeSolution_{project_name_input.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+    
+    st.caption("Report includes: Load Requirements, Generator Selection, Fleet Configuration, Spinning Reserve Analysis, BESS System, Electrical Performance, Footprint, Environmental, and Financial Analysis.")
+
+# --- FOOTER ---
+st.markdown("---")
+col_foot1, col_foot2, col_foot3 = st.columns(3)
+col_foot1.caption("CAT Size Solution v3.0")
+col_foot2.caption("Next-Gen Data Center Power Solutions")
+col_foot3.caption("Caterpillar Electric Power | 2026")
+
