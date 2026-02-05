@@ -704,7 +704,25 @@ with st.sidebar:
         volt_mode = st.radio("Voltage", ["Auto-Recommend", "Manual"], horizontal=True)
         manual_voltage_kv = 13.8
         if volt_mode == "Manual":
-            manual_voltage_kv = st.number_input("KV", 0.4, 69.0, 13.8)
+            manual_voltage_kv = st.number_input("KV", 0.4, 69.0, 13.8)    
+
+    # --- NUEVO: PÉRDIDAS DE DISTRIBUCIÓN ---
+    st.markdown("📉 **Distribution Losses**")
+    dist_loss_pct = st.slider(
+        "Transformer & Cable Losses (%)", 
+        0.0, 5.0, 1.5, 
+        step=0.1, 
+        help="Pérdidas desde bornes del generador hasta el punto de conexión IT."
+    )
+    
+    # Ajustamos la carga requerida en bornes del generador
+    # Si el DC necesita 100 MW y perdemos 2%, el Gen debe producir 100 / (1 - 0.02)
+    p_avg_at_gen = p_total_avg / (1 - dist_loss_pct/100)
+    p_peak_at_gen = p_total_peak / (1 - dist_loss_pct/100)
+    
+    if dist_loss_pct > 0:
+        st.caption(f"⚠️ Gen Output Required: **{p_avg_at_gen:.1f} MW** (+{p_avg_at_gen - p_total_avg:.1f} MW losses)")
+    
     # -------------------------------------------------------------------------
     # 4. ECONOMÍA (ECONOMICS)
     # -------------------------------------------------------------------------
@@ -3046,6 +3064,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
