@@ -693,12 +693,25 @@ with st.sidebar:
         include_chp = st.checkbox("Include Tri-Gen (CHP)", value=False)
         cooling_method = st.selectbox("Cooling", ["Air-Cooled", "Water-Cooled"])
         
-        # Fuel
-        fuel_mode = st.radio("Fuel", ["Pipeline Gas", "LNG", "Dual-Fuel"])
+    # Fuel Configuration
+        st.markdown("---")
+        st.markdown("⛽ **Fuel Strategy**")
+        fuel_mode = st.radio("Fuel Source", ["Pipeline Gas", "LNG (Virtual Pipeline)", "Dual-Fuel (Pipe + LNG Backup)"])
+        
         is_lng_primary = "LNG" in fuel_mode
-        has_lng_storage = fuel_mode in ["LNG", "Dual-Fuel"]
-        lng_days = 7 if has_lng_storage else 0
+        has_lng_storage = fuel_mode in ["LNG (Virtual Pipeline)", "Dual-Fuel (Pipe + LNG Backup)"]
+        
+        lng_days = 0
         dist_gas_main_m = 1000
+        
+        if has_lng_storage:
+            lng_days = st.slider("On-Site Fuel Autonomy (Days)", 1, 15, 5, help="Días de almacenamiento requeridos en sitio")
+            
+            if is_lng_primary:
+                st.caption("🚛 **LNG Logistics:** Primary Fuel Source")
+            else:
+                st.caption("🛡️ **LNG Logistics:** Backup Only")
+    
     # Voltaje
     with st.expander("⚡ Electrical"):
         volt_mode = st.radio("Voltage", ["Auto-Recommend", "Manual"], horizontal=True)
@@ -729,9 +742,26 @@ with st.sidebar:
     st.header("4. Economics")
     
     c_eco1, c_eco2 = st.columns(2)
-    gas_price_wellhead = c_eco1.number_input("Gas ($/MMBtu)", 0.5, 20.0, 4.0)
-    gas_transport = c_eco2.number_input("Transp ($)", 0.0, 5.0, 0.5)
-    total_gas_price = gas_price_wellhead + gas_transport
+    
+    # Precio base (Gasoducto)
+    gas_price_pipeline = c_eco1.number_input("Pipeline Gas ($/MMBtu)", 0.5, 20.0, 3.5, step=0.1)
+    
+    # Precio LNG (Si aplica)
+    if has_lng_storage:
+        gas_price_lng = c_eco2.number_input("LNG Delivered ($/MMBtu)", 4.0, 30.0, 9.5, step=0.5, help="Incluye molécula, licuefacción y flete.")
+    else:
+        gas_price_lng = 0.0
+        
+    # Definir precio final para OPEX según el modo
+    if is_lng_primary:
+        total_gas_price = gas_price_lng
+        st.info(f"Using LNG Price: **${total_gas_price:.2f}/MMBtu**")
+    elif fuel_mode == "Dual-Fuel (Pipe + LNG Backup)":
+        # Asumimos 95% uso de ducto y 5% pruebas con LNG para el blended price
+        total_gas_price = (gas_price_pipeline * 0.95) + (gas_price_lng * 0.05)
+        st.caption(f"Blended Price: **${total_gas_price:.2f}/MMBtu**")
+    else:
+        total_gas_price = gas_price_pipeline
     
     benchmark_price = st.number_input("Grid Price ($/kWh)", 0.05, 0.50, 0.12)
     
@@ -1622,7 +1652,48 @@ else:
 total_fuel_input_mw = (p_total_avg / fleet_efficiency)
 total_fuel_input_mmbtu_hr = total_fuel_input_mw * 3.412
 
-# Pipeline sizing
+# --- LNG CALCULATION ENGINE (NUEVO) ---
+lng_metrics = {}
+
+if has_lng_storage:
+    # 1. Factores de Conversión LNG
+    # 1 MMBtu ≈ 12.0 - 12.5 Galones -> Usamos 0.0825 MMBtu/Gal
+    mmbtu_per_gallon = 0.0825 
+    truck_capacity_gal = 10000 # Camión estándar 10k galones
+    
+    # 2. Consumo Volumétrico
+    consumption_gal_hr = total_fuel_input_mmbtu_hr / mmbtu_per_gallon
+    consumption_gal_day = consumption_gal_hr * 24
+    
+    # 3. Dimensionamiento de Almacenamiento (Storage)
+    required_storage_gal = consumption_gal_day * lng_days
+    
+    # Tanques comerciales típicos (60k galones es estándar industrial)
+    tank_size_gal = 60000 
+    num_tanks = math.ceil(required_storage_gal / tank_size_gal)
+    # Mínimo 1 tanque si hay almacenamiento
+    num_tanks = max(1, num_tanks)
+    
+    # 4. Logística de Camiones
+    if is_lng_primary:
+        trucks_per_day = consumption_gal_day / truck_capacity_gal
+        trucks_per_week = trucks_per_day * 7
+    else:
+        # Si es backup, tráfico mínimo (boil-off replacement)
+        trucks_per_day = 0 
+        trucks_per_week = 0.5 
+        
+    lng_metrics = {
+        "gal_per_day": consumption_gal_day,
+        "storage_gal": required_storage_gal,
+        "num_tanks": num_tanks,
+        "tank_size": tank_size_gal,
+        "trucks_day": trucks_per_day,
+        "trucks_week": trucks_per_week,
+        "peak_flow_mmbtu_hr": total_fuel_input_mmbtu_hr * (p_total_peak/p_total_avg)
+    }
+
+# Pipeline sizing (lógica actualizada)
 if not is_lng_primary:
     flow_rate_scfh = total_fuel_input_mmbtu_hr * 1000 / 1.02
     rec_pipe_dia = math.sqrt(flow_rate_scfh / 3000) * 2
@@ -1715,22 +1786,42 @@ else:
     bess_capex_m = 0
     bess_om_annual = 0
 
-# Fuel infrastructure
+# --- LNG INFRASTRUCTURE CAPEX (DETALLADO) ---
+lng_capex_m = 0.0
+pipeline_capex_m = 0.0
+
 if has_lng_storage:
-    log_capex = (lng_gal * 3.5) + (lng_days * 50000)
-    pipeline_capex_m = 0
-else:
-    log_capex = 0
+    # Costos Unitarios estimados (USD)
+    cost_per_tank_60k_gal = 450000  # Tanque criogénico
+    cost_civil_per_tank = 100000    # Obra civil
+    cost_vaporizers = 50000         # Por unidad 
+    cost_piping_controls = 500000   # BOP Gas
+    
+    # 1. Costo Almacenamiento
+    n_tanks = lng_metrics.get("num_tanks", 1)
+    storage_capex = n_tanks * (cost_per_tank_60k_gal + cost_civil_per_tank)
+    
+    # 2. Costo Regasificación
+    peak_flow = lng_metrics.get("peak_flow_mmbtu_hr", 100)
+    vaporizers_needed = math.ceil(peak_flow / 50) + 1 # 50 MMBtu/hr per unit, N+1
+    regas_capex = vaporizers_needed * cost_vaporizers
+    
+    # Total LNG CAPEX
+    lng_infra_cost = storage_capex + regas_capex + cost_piping_controls
+    lng_capex_m = lng_infra_cost / 1e6
+
+# Costo de Gasoducto (si aplica)
+if not is_lng_primary:
     pipe_cost_m = 50 * rec_pipe_dia
     pipeline_capex_m = (pipe_cost_m * dist_gas_main_m) / 1e6
 
-# CAPEX breakdown
+# CAPEX breakdown ACTUALIZADO
 cost_items = [
     {"Item": "Generation Units", "Index": 1.00, "Cost (M USD)": gen_cost_total},
     {"Item": "Installation & BOP", "Index": idx_install, "Cost (M USD)": gen_cost_total * idx_install},
     {"Item": "Tri-Gen Plant", "Index": idx_chp, "Cost (M USD)": gen_cost_total * idx_chp},
     {"Item": "BESS System", "Index": 0.0, "Cost (M USD)": bess_capex_m},
-    {"Item": "Fuel Infrastructure", "Index": 0.0, "Cost (M USD)": (log_capex + pipeline_capex_m * 1e6)/1e6},
+    {"Item": "Fuel Infra (LNG/Pipe)", "Index": 0.0, "Cost (M USD)": lng_capex_m + pipeline_capex_m},
     {"Item": "Emissions Control", "Index": 0.0, "Cost (M USD)": at_capex_total / 1e6},
 ]
 df_capex = pd.DataFrame(cost_items)
@@ -2061,6 +2152,36 @@ with t1:
         st.write(f"- Hours/Year: {effective_hours:.0f}")
         st.write(f"- Annual Energy: {mwh_year:,.0f} MWh")
 
+    # --- VISUALIZACIÓN LOGÍSTICA LNG ---
+    if has_lng_storage and lng_metrics:
+        st.markdown("---")
+        st.subheader("🚛 LNG Logistics & Supply Chain")
+        
+        c_lng1, c_lng2, c_lng3, c_lng4 = st.columns(4)
+        
+        c_lng1.metric("Daily Consumption", f"{lng_metrics['gal_per_day']:,.0f} Gal")
+        c_lng2.metric("Storage Required", f"{lng_metrics['storage_gal']:,.0f} Gal", f"{lng_days} Days Autonomy")
+        c_lng3.metric("Infrastructure", f"{lng_metrics['num_tanks']} Tanks", f"60k Gal each")
+        
+        # Semáforo de tráfico
+        trucks = lng_metrics['trucks_day']
+        if trucks < 1:
+             truck_delta = "Low Traffic"
+             truck_color = "normal"
+        elif trucks < 5:
+             truck_delta = "Medium Traffic"
+             truck_color = "off"
+        else:
+             truck_delta = "High Traffic!"
+             truck_color = "inverse"
+             
+        if is_lng_primary:
+            c_lng4.metric("Trucks per Day", f"{trucks:.1f}", truck_delta, delta_color=truck_color)
+            st.info(f"ℹ️ **Logistics Plan:** You need approximately **{int(math.ceil(lng_metrics['trucks_week']))} deliveries per week**. Ensure road access allows heavy trucks.")
+        else:
+            c_lng4.metric("Trucks per Week", "< 1", "Backup Mode")
+            st.success("✅ **Backup Mode:** LNG usage is minimal. Fuel is stored for emergencies.")
+    
 with t2:
     st.subheader("Electrical Performance & Stability")
     
@@ -3110,6 +3231,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
