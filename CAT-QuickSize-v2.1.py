@@ -779,6 +779,22 @@ with st.sidebar:
         
         # Agregamos el Inversor aquí
         bess_life_inv = st.number_input("Inverter Life (Yrs)", 5, 30, 15, help="Vida útil de la electrónica de potencia (PCS)")
+
+    # --- NUEVO: FUEL INFRASTRUCTURE (Editable) ---
+    with st.expander("⛽ Fuel Infra Economics", expanded=False):
+        c_fuel1, c_fuel2 = st.columns(2)
+        # Multiplicador general para obra civil, tuberías y mano de obra local
+        fuel_infra_mult = c_fuel1.number_input("Infra Cost Multiplier", 0.5, 3.0, 1.0, step=0.1, help="Factor de ajuste para costos locales (Obra civil, instalación)")
+        
+        # Costo específico del tanque (Item principal del LNG)
+        if has_lng_storage:
+            lng_tank_cost = c_fuel2.number_input("LNG Tank Cost ($)", 200000, 1000000, 450000, step=25000, help="Costo unitario por tanque criogénico (60k gal)")
+        else:
+            lng_tank_cost = 450000 # Valor por defecto oculto
+            
+        # Distancia del gasoducto (Editable aquí también si se desea)
+        if not is_lng_primary:
+             dist_gas_main_m = c_fuel2.number_input("Dist. to Main (m)", 0, 50000, 1000, step=100)
     
     with st.expander("💰 Financial Specs", expanded=False):
         wacc = st.number_input("WACC (%)", 1.0, 15.0, 8.0) / 100
@@ -1810,34 +1826,38 @@ else:
     bess_capex_m = 0
     bess_om_annual = 0
 
-# --- LNG INFRASTRUCTURE CAPEX (DETALLADO) ---
+# --- LNG INFRASTRUCTURE CAPEX (DETALLADO & EDITABLE) ---
 lng_capex_m = 0.0
 pipeline_capex_m = 0.0
 
 if has_lng_storage:
-    # Costos Unitarios estimados (USD)
-    cost_per_tank_60k_gal = 450000  # Tanque criogénico
-    cost_civil_per_tank = 100000    # Obra civil
-    cost_vaporizers = 50000         # Por unidad 
-    cost_piping_controls = 500000   # BOP Gas
+    # 1. Costos Unitarios (Ajustados por Multiplicador)
+    cost_tank_unit = lng_tank_cost  # Usamos el input del usuario
+    cost_civil_per_tank = 100000 * fuel_infra_mult   # Obra civil escala con el factor
+    cost_vaporizers = 50000 * fuel_infra_mult        # Equipos menores escalan
+    cost_piping_controls = 500000 * fuel_infra_mult  # BOP escala
     
-    # 1. Costo Almacenamiento
+    # 2. Cálculo
     n_tanks = lng_metrics.get("num_tanks", 1)
-    storage_capex = n_tanks * (cost_per_tank_60k_gal + cost_civil_per_tank)
+    storage_capex = n_tanks * (cost_tank_unit + cost_civil_per_tank)
     
-    # 2. Costo Regasificación
     peak_flow = lng_metrics.get("peak_flow_mmbtu_hr", 100)
-    vaporizers_needed = math.ceil(peak_flow / 50) + 1 # 50 MMBtu/hr per unit, N+1
+    vaporizers_needed = math.ceil(peak_flow / 50) + 1 
     regas_capex = vaporizers_needed * cost_vaporizers
     
     # Total LNG CAPEX
     lng_infra_cost = storage_capex + regas_capex + cost_piping_controls
     lng_capex_m = lng_infra_cost / 1e6
 
-# Costo de Gasoducto (si aplica)
+# Costo de Gasoducto (Si aplica)
 if not is_lng_primary:
-    pipe_cost_m = 50 * rec_pipe_dia
-    pipeline_capex_m = (pipe_cost_m * dist_gas_main_m) / 1e6
+    # Costo base por metro lineal ($50/m para tubo pequeño, escalado por diámetro)
+    base_pipe_cost = 50 * (rec_pipe_dia if rec_pipe_dia > 0 else 4) 
+    
+    # Aplicamos el multiplicador de infraestructura (zanjas, permisos, terreno difícil)
+    adjusted_pipe_cost = base_pipe_cost * fuel_infra_mult
+    
+    pipeline_capex_m = (adjusted_pipe_cost * dist_gas_main_m) / 1e6
 
 # CAPEX breakdown ACTUALIZADO
 cost_items = [
@@ -3255,6 +3275,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
