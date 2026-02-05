@@ -1025,13 +1025,13 @@ with st.sidebar.expander("⚙️ Generator Parameters (Editable)", expanded=Fals
     )
     gen_data["maintenance_interval_hrs"] = maint_interval_edit
     
-    # Maintenance Duration
+   # Maintenance Duration
     maint_duration_edit = st.number_input(
         "Maintenance Duration (hrs)",
-        value=gen_data["maintenance_duration_hrs"],
-        min_value=12,
+        value=int(gen_data["maintenance_duration_hrs"]), # Aseguramos entero
+        min_value=4,   # <--- CORREGIDO (Permite mantenimientos rápidos)
         max_value=240,
-        step=6,
+        step=4,
         help="Downtime per maintenance event"
     )
     gen_data["maintenance_duration_hrs"] = maint_duration_edit
@@ -3399,6 +3399,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
