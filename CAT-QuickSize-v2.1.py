@@ -593,7 +593,7 @@ with st.sidebar:
     p_it = st.number_input("Critical IT Load (MW)", 1.0, 2000.0, 100.0, step=10.0)
     
     # --- VARIABLE FALTANTE AGREGADA AQUÍ ---
-    avail_req = st.number_input("Target Availability (%)", 90.0, 99.9999, 99.99, format="%.4f", help="Meta de confiabilidad (Define N+X)")
+    avail_req = st.number_input("Target Availability (%)", 90.0, 99.9999, 99.99, format="%.4f", help="Reliability Target (Defines N+X redundancy)")
     
     with st.expander("⚙️ PUE & Load Dynamics", expanded=False):
         # Defaults inteligentes por tipo
@@ -705,7 +705,7 @@ with st.sidebar:
         dist_gas_main_m = 1000
         
         if has_lng_storage:
-            lng_days = st.slider("On-Site Fuel Autonomy (Days)", 1, 15, 5, help="Días de almacenamiento requeridos en sitio")
+            lng_days = st.slider("On-Site Fuel Autonomy (Days)", 1, 15, 5, help="Days of on-site storage required")
             
             if is_lng_primary:
                 st.caption("🚛 **LNG Logistics:** Primary Fuel Source")
@@ -725,7 +725,7 @@ with st.sidebar:
         "Transformer & Cable Losses (%)", 
         0.0, 5.0, 1.5, 
         step=0.1, 
-        help="Pérdidas desde bornes del generador hasta el punto de conexión IT."
+        help="Losses from generator terminals to IT connection point."
     )
     
     # Ajustamos la carga requerida en bornes del generador
@@ -748,7 +748,7 @@ with st.sidebar:
     
     # Precio LNG (Si aplica)
     if has_lng_storage:
-        gas_price_lng = c_eco2.number_input("LNG Delivered ($/MMBtu)", 4.0, 30.0, 9.5, step=0.5, help="Incluye molécula, licuefacción y flete.")
+        gas_price_lng = c_eco2.number_input("LNG Delivered ($/MMBtu)", 4.0, 30.0, 9.5, step=0.5, help="Includes molecule, liquefaction, and freight.")
     else:
         gas_price_lng = 0.0
         
@@ -768,31 +768,31 @@ with st.sidebar:
     # ... (después de benchmark_price) ...
     
     # --- NUEVO: BESS ECONOMICS (Editable) ---
+    # --- NUEVO: BESS ECONOMICS (Editable) ---
     with st.expander("🔋 BESS Economics", expanded=False):
         c_bess1, c_bess2 = st.columns(2)
-        bess_cost_kw = c_bess1.number_input("BESS Power CAPEX ($/kW)", 100.0, 1000.0, 250.0, step=10.0, help="Costo de inversores y PCS")
-        bess_cost_kwh = c_bess2.number_input("BESS Energy CAPEX ($/kWh)", 100.0, 1000.0, 400.0, step=10.0, help="Costo de los racks de baterías (DC block)")
+        bess_cost_kw = c_bess1.number_input("BESS Power CAPEX ($/kW)", 100.0, 1000.0, 250.0, step=10.0, help="Inverter & PCS cost")
+        bess_cost_kwh = c_bess2.number_input("BESS Energy CAPEX ($/kWh)", 100.0, 1000.0, 400.0, step=10.0, help="Battery rack cost (DC block)")
         
         c_bess3, c_bess4 = st.columns(2)
-        bess_om_kw_yr = c_bess3.number_input("BESS O&M ($/kW-yr)", 0.0, 50.0, 5.0, step=0.5)
-        bess_life_batt = c_bess4.number_input("Battery Life (Yrs)", 5, 20, 10, help="Reemplazo de celdas (Augmentation/Replacement)")
+        bess_om_kw_yr = c_bess3.number_input("BESS O&M ($/kW-yr)", 0.0, 50.0, 5.0, step=0.5, help="Fixed annual maintenance")
+        bess_life_batt = c_bess4.number_input("Battery Life (Yrs)", 5, 20, 10, help="Cell replacement interval (Augmentation)")
         
-        # Agregamos el Inversor aquí
-        bess_life_inv = st.number_input("Inverter Life (Yrs)", 5, 30, 15, help="Vida útil de la electrónica de potencia (PCS)")
-
+        bess_life_inv = st.number_input("Inverter Life (Yrs)", 5, 30, 15, help="Power electronics (PCS) useful life")
+        
+    # --- NUEVO: FUEL INFRASTRUCTURE (Editable) ---
     # --- NUEVO: FUEL INFRASTRUCTURE (Editable) ---
     with st.expander("⛽ Fuel Infra Economics", expanded=False):
         c_fuel1, c_fuel2 = st.columns(2)
-        # Multiplicador general para obra civil, tuberías y mano de obra local
-        fuel_infra_mult = c_fuel1.number_input("Infra Cost Multiplier", 0.5, 3.0, 1.0, step=0.1, help="Factor de ajuste para costos locales (Obra civil, instalación)")
+        # Multiplicador general
+        fuel_infra_mult = c_fuel1.number_input("Infra Cost Multiplier", 0.5, 3.0, 1.0, step=0.1, help="Adjustment factor for local costs (Civil works, installation)")
         
-        # Costo específico del tanque (Item principal del LNG)
+        # Costo específico del tanque
         if has_lng_storage:
-            lng_tank_cost = c_fuel2.number_input("LNG Tank Cost ($)", 200000, 1000000, 450000, step=25000, help="Costo unitario por tanque criogénico (60k gal)")
+            lng_tank_cost = c_fuel2.number_input("LNG Tank Cost ($)", 200000, 1000000, 450000, step=25000, help="Unit cost per cryogenic tank (60k gal)")
         else:
-            lng_tank_cost = 450000 # Valor por defecto oculto
+            lng_tank_cost = 450000
             
-        # Distancia del gasoducto (Editable aquí también si se desea)
         if not is_lng_primary:
              dist_gas_main_m = c_fuel2.number_input("Dist. to Main (m)", 0, 50000, 1000, step=100)
     
@@ -866,7 +866,7 @@ with st.sidebar.expander("⚙️ Generator Parameters (Editable)", expanded=Fals
         "ISO Rating (MW)",
         value=float(gen_data["iso_rating_mw"]), # Asegurar float
         min_value=0.5, max_value=100.0, step=0.1,
-        help="Potencia nominal bruta del generador"
+        help="Generator gross prime rating (ISO)"
     )
     gen_data["iso_rating_mw"] = iso_mw_edit
     
@@ -875,7 +875,7 @@ with st.sidebar.expander("⚙️ Generator Parameters (Editable)", expanded=Fals
         "Gen Terminal Voltage (kV)",
         value=13.8, # Valor típico
         step=0.1,
-        help="Tensión de salida del alternador"
+        help="Alternator output voltage"
     )
     
     # 3. CARGAS AUXILIARES (Parasitic Load)
@@ -883,7 +883,7 @@ with st.sidebar.expander("⚙️ Generator Parameters (Editable)", expanded=Fals
         "Gen Auxiliaries / Parasitic (%)",
         value=2.0, # Default típico (ventiladores, bombas, etc.)
         min_value=0.0, max_value=10.0, step=0.1,
-        help="Consumo propio del generador (radiadores, bombas, ventilación)"
+        help="Generator parasitic consumption (radiators, pumps, ventilation)"
     )
     gen_data["aux_pct"] = gen_aux_pct # Guardamos en el diccionario
     
@@ -3275,6 +3275,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
