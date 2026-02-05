@@ -5,6 +5,63 @@ import math
 import sys
 import plotly.express as px
 import plotly.graph_objects as go
+import pdfplumber
+import re
+
+def parse_gerp_pdf(uploaded_file):
+    """
+    Extrae datos clave del reporte PDF de Caterpillar (GERP).
+    Busca patrones específicos de texto para Site Rating, Eficiencia, Calor y Emisiones.
+    """
+    data = {}
+    text_content = ""
+    
+    with pdfplumber.open(uploaded_file) as pdf:
+        for page in pdf.pages:
+            text_content += page.extract_text() + "\n"
+            
+    # --- 1. SITE RATING (ekW) ---
+    # Busca "GENSET POWER (WITH GEARBOX..." y toma el primer número entero grande
+    # El reporte muestra: "2502" en la columna de 100% Load
+    match_power = re.search(r"GENSET POWER.*?(\d{4})", text_content, re.DOTALL)
+    if match_power:
+        data['ekW'] = float(match_power.group(1))
+        
+    # --- 2. EFICIENCIA (%) ---
+    # Busca "GENSET EFFICIENCY (ISO 3046/1)" -> "44.4"
+    match_eff = re.search(r"GENSET EFFICIENCY.*?(\d{2}\.\d)", text_content)
+    if match_eff:
+        data['eff'] = float(match_eff.group(1))
+
+    # --- 3. HEAT REJECTION (kW) ---
+    # JW: "REJ. TO JACKET WATER (JW)... 550"
+    match_jw = re.search(r"REJ\. TO JACKET WATER.*?(\d{3,5})", text_content)
+    if match_jw:
+        data['heat_jw'] = float(match_jw.group(1))
+        
+    # Exhaust: "REJECTION TO EXHAUST (LHV TO 120°C)... 1054"
+    match_exh = re.search(r"REJECTION TO EXHAUST.*?120.*?(\d{3,5})", text_content)
+    if match_exh:
+        data['heat_exh'] = float(match_exh.group(1))
+        
+    # OC: "REJ. TO LUBE OIL (OC)... 180"
+    match_oc = re.search(r"REJ\. TO LUBE OIL.*?(\d{3,5})", text_content)
+    if match_oc:
+        data['heat_oc'] = float(match_oc.group(1))
+
+    # --- 4. EMISSIONS (NOx) ---
+    # "NOX EMISSION LEVEL... 0.5"
+    match_nox = re.search(r"NOX EMISSION LEVEL.*?(\d\.\d+)", text_content)
+    if match_nox:
+        data['nox'] = float(match_nox.group(1))
+        
+    # --- 5. MODELO ---
+    # Busca algo como "G3520K" en las primeras líneas
+    match_model = re.search(r"(G\d{4}[A-Z]?)", text_content)
+    if match_model:
+        data['model'] = match_model.group(1)
+        
+    return data
 from io import BytesIO
 from datetime import datetime
 
@@ -825,7 +882,7 @@ with st.sidebar:
             target_lcoe = st.number_input("Target ($/kWh)", 0.05, 0.30, 0.08)
 
 # ==============================================================================
-# 3. GENERATOR SELECTION & FLEET OPTIMIZATION
+# 3. GENERATOR SELECTION & FLEET OPTIMIZATION (GERP ENABLED)
 # ==============================================================================
 
 available_gens = {k: v for k, v in leps_gas_library.items() if v["type"] in gen_filter}
@@ -834,35 +891,81 @@ if not available_gens:
     st.error("⚠️ No generators match filter. Adjust technology selection.")
     st.stop()
 
-# Auto-select best generator
-best_gen = None
-best_score = -999
+# 1. Preparamos la lista de opciones (Con la opción mágica al principio)
+gen_options = list(available_gens.keys())
+gen_options.insert(0, "📄 Import from GERP PDF")
 
-for gen_name, gen_data in available_gens.items():
-    unit_derated = gen_data["iso_rating_mw"] * derate_factor_calc
-    
-    if unit_derated < (p_total_peak * 0.1):
-        continue
-    
-    # Usamos load_step_pct (Golpe Físico) para ver si el motor aguanta
-    step_match = 1.0 if gen_data["step_load_pct"] >= load_step_pct else 0.5
-    eff_score = gen_data["electrical_efficiency"] * 10
-    cost_score = -gen_data["est_cost_kw"] / 100
-    density_score = gen_data["power_density_mw_per_m2"] * 20  # Favor high density
-    
-    total_score = step_match * 100 + eff_score + cost_score + density_score
-    
-    if total_score > best_score:
-        best_score = total_score
-        best_gen = gen_name
+# 2. Dibujamos el Selector
+selected_gen_name = st.sidebar.selectbox("🔧 Selected Generator", gen_options)
 
-selected_gen = st.sidebar.selectbox(
-    "🔧 Selected Generator",
-    list(available_gens.keys()),
-    index=list(available_gens.keys()).index(best_gen) if best_gen else 0
-)
+# 3. Lógica de Decisión (PDF vs Librería)
+if selected_gen_name == "📄 Import from GERP PDF":
+    st.sidebar.markdown("### 📤 Upload GERP Report")
+    uploaded_file = st.sidebar.file_uploader("Drop PDF here", type=["pdf"])
+    
+    # Defaults (Placeholders)
+    default_model = "G3520K (Generic)"
+    default_kw, default_eff, default_nox = 2500.0, 44.4, 0.5
+    default_jw, default_exh = 550.0, 1054.0
+    
+    # SI SUBEN EL ARCHIVO -> LEER DATOS
+    if uploaded_file is not None:
+        try:
+            extracted_data = parse_gerp_pdf(uploaded_file)
+            if extracted_data:
+                st.sidebar.success(f"✅ Read: {extracted_data.get('model', 'Engine')}")
+                default_model = extracted_data.get('model', default_model)
+                default_kw = extracted_data.get('ekW', default_kw)
+                default_eff = extracted_data.get('eff', default_eff)
+                default_nox = extracted_data.get('nox', default_nox)
+                default_jw = extracted_data.get('heat_jw', default_jw)
+                default_exh = extracted_data.get('heat_exh', default_exh)
+        except Exception as e:
+            st.sidebar.error(f"Error reading PDF: {e}")
 
-gen_data = available_gens[selected_gen]
+    # MOSTRAR DATOS VALIDADOS (Editables)
+    st.sidebar.markdown("#### 📝 Validated Data")
+    custom_model = st.sidebar.text_input("Model Name", default_model)
+    
+    c_g1, c_g2 = st.sidebar.columns(2)
+    custom_iso_mw = c_g1.number_input("Site ekW (100%)", 0.0, 10000.0, float(default_kw), help="Site Power from GERP") / 1000.0
+    custom_eff = c_g2.number_input("Genset Eff. %", 0.0, 60.0, float(default_eff)) / 100.0
+    
+    with st.sidebar.expander("🔥 Thermal & Emissions", expanded=True):
+        heat_jw = st.number_input("JW Heat (kW)", 0.0, 5000.0, float(default_jw))
+        heat_exhaust = st.number_input("Exhaust Heat (kW)", 0.0, 5000.0, float(default_exh))
+        nox_val = st.number_input("NOx (g/bhp-hr)", 0.0, 5.0, float(default_nox))
+
+    # Construimos el objeto gen_data MANUALMENTE
+    gen_data = {
+        "description": f"Imported: {custom_model}",
+        "type": "High Speed", 
+        "iso_rating_mw": custom_iso_mw,
+        "electrical_efficiency": custom_eff,
+        "heat_rate_lhv": 3412 / custom_eff if custom_eff > 0 else 9000,
+        "step_load_pct": 25.0,
+        "ramp_rate_mw_s": 0.5,
+        "emissions_nox": nox_val,
+        "emissions_co": 2.1,
+        "mtbf_hours": 50000,
+        "maintenance_interval_hrs": 1000,
+        "maintenance_duration_hrs": 8,
+        "est_cost_kw": 600.0,
+        "est_install_kw": 400.0,
+        "power_density_mw_per_m2": 0.010,
+        "gas_pressure_min_psi": 1.5,
+        "reactance_xd_2": 0.14,
+        "heat_rej_jw_kw": heat_jw,     # Dato Real
+        "heat_rej_exh_kw": heat_exhaust # Dato Real
+    }
+    # Como el dato viene del GERP (Site Specific), el factor de derateo ya está aplicado (es 1.0)
+    derate_factor_calc = 1.0 
+
+else:
+    # --- OPCIÓN ESTÁNDAR (Librería) ---
+    gen_data = available_gens[selected_gen_name]
+    # Mantenemos el derateo calculado en Sección 2
+    # (No tocamos derate_factor_calc aquí, usa el global)
 
 # ============================================================================
 # GENERATOR PARAMETERS - EDITABLE (NEW FEATURE)
@@ -3296,6 +3399,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
