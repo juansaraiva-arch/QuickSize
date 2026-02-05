@@ -1748,8 +1748,11 @@ co2_ton_yr = total_fuel_input_mmbtu_hr * 0.0531 * 8760 * capacity_factor
 # Emissions control CAPEX Calculation
 at_capex_total = 0
 
+# --- CORRECCIÓN: Calcular horas efectivas aquí para evitar el NameError ---
+effective_hours = 8760 * capacity_factor
+# -------------------------------------------------------------------------
+
 # Convertir libras/hora a Toneladas/año
-# nox_lb_hr ya fue calculado líneas arriba
 nox_tons_year = (nox_lb_hr * effective_hours) / 2000 
 
 # REGLA: Se instala si supera 100 Ton/año (Major Source) O si el usuario lo fuerza
@@ -3293,6 +3296,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
