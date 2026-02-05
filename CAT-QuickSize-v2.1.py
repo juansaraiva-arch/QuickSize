@@ -795,6 +795,15 @@ with st.sidebar:
             
         if not is_lng_primary:
              dist_gas_main_m = c_fuel2.number_input("Dist. to Main (m)", 0, 50000, 1000, step=100)
+
+    # --- NUEVO: EMISSIONS CONTROL ECONOMICS (Editable) ---
+    with st.expander("💨 Emissions Control Economics", expanded=False):
+        # Opción para forzar el sistema aunque el algoritmo diga que no hace falta
+        force_emissions = st.checkbox("Force Aftertreatment System", value=False, help="Incluir SCR/Oxicat sin importar el nivel de emisiones calculado")
+        
+        c_em1, c_em2 = st.columns(2)
+        cost_scr_kw = c_em1.number_input("SCR Cost ($/kW)", 0.0, 500.0, 75.0, step=5.0, help="Selective Catalytic Reduction (NOx)")
+        cost_oxicat_kw = c_em2.number_input("OxiCat Cost ($/kW)", 0.0, 200.0, 25.0, step=5.0, help="Oxidation Catalyst (CO/VOC)")
     
     with st.expander("💰 Financial Specs", expanded=False):
         wacc = st.number_input("WACC (%)", 1.0, 15.0, 8.0) / 100
@@ -1736,12 +1745,21 @@ nox_lb_hr = (p_total_avg * 1000) * (gen_data["emissions_nox"] / 1000)
 co_lb_hr = (p_total_avg * 1000) * (gen_data["emissions_co"] / 1000)
 co2_ton_yr = total_fuel_input_mmbtu_hr * 0.0531 * 8760 * capacity_factor
 
-# Emissions control
+# Emissions control CAPEX Calculation
 at_capex_total = 0
-if nox_lb_hr * 8760 > 100:
-    cost_scr_kw = 75.0
-    cost_oxicat_kw = 25.0
-    at_capex_total = (installed_cap * 1000) * (cost_scr_kw + cost_oxicat_kw)
+
+# Convertir libras/hora a Toneladas/año
+# nox_lb_hr ya fue calculado líneas arriba
+nox_tons_year = (nox_lb_hr * effective_hours) / 2000 
+
+# REGLA: Se instala si supera 100 Ton/año (Major Source) O si el usuario lo fuerza
+if nox_tons_year > 100 or force_emissions:
+    # Usamos los costos unitarios definidos en el Sidebar
+    total_ats_cost_kw = cost_scr_kw + cost_oxicat_kw
+    at_capex_total = (installed_cap * 1000) * total_ats_cost_kw
+    
+    if force_emissions:
+        st.toast("⚠️ Emissions Control Forced by User")
 
 # ==============================================================================
 # 6. COOLING & TRI-GENERATION
@@ -3275,6 +3293,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
