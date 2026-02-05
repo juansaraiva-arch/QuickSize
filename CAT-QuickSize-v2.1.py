@@ -958,7 +958,7 @@ print(f"[DEBUG] Config A: n_running={n_running_no_bess} (Peak req: {n_running_pe
 
 # Find minimum reserve units (N+X) needed for availability target
 best_config_a = None
-for n_res in range(0, 20):
+for n_res in range(0, 100):
     n_tot = n_running_no_bess + n_res
     
     avg_avail, _ = calculate_availability_weibull(
@@ -992,7 +992,7 @@ for n_res in range(0, 20):
 
 # Fallback if availability target not met
 if not best_config_a:
-    n_res_fallback = 15
+    n_res_fallback = 100
     n_tot_fallback = n_running_no_bess + n_res_fallback
     
     fallback_avail, _ = calculate_availability_weibull(
@@ -1043,7 +1043,7 @@ if use_bess:
     
     # Find minimum reserve units for availability
     best_config_b = None
-    for n_res in range(0, 20):
+    for n_res in range(0, 100):
         n_tot = n_running_with_bess + n_res
         
         avg_avail, _ = calculate_availability_weibull(
@@ -1076,7 +1076,7 @@ if use_bess:
     
     # Fallback
     if not best_config_b:
-        n_res_fallback = 10
+        n_res_fallback = 100
         n_tot_fallback = n_running_with_bess + n_res_fallback
         fallback_avail_b, _ = calculate_availability_weibull(
             n_tot_fallback, n_running_with_bess, mtbf_hours, project_years,
@@ -3046,6 +3046,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
