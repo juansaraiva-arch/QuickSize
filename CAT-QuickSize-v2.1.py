@@ -799,7 +799,7 @@ with st.sidebar:
     # --- NUEVO: EMISSIONS CONTROL ECONOMICS (Editable) ---
     with st.expander("💨 Emissions Control Economics", expanded=False):
         # Opción para forzar el sistema aunque el algoritmo diga que no hace falta
-        force_emissions = st.checkbox("Force Aftertreatment System", value=False, help="Incluir SCR/Oxicat sin importar el nivel de emisiones calculado")
+        force_emissions = st.checkbox("Force Aftertreatment System", value=False, help="Include SCR/Oxicat regardless of the calculated emissions level")
         
         c_em1, c_em2 = st.columns(2)
         cost_scr_kw = c_em1.number_input("SCR Cost ($/kW)", 0.0, 500.0, 75.0, step=5.0, help="Selective Catalytic Reduction (NOx)")
@@ -3296,6 +3296,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
