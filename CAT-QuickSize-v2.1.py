@@ -774,11 +774,11 @@ with st.sidebar:
         bess_cost_kwh = c_bess2.number_input("BESS Energy CAPEX ($/kWh)", 100.0, 1000.0, 400.0, step=10.0, help="Costo de los racks de baterías (DC block)")
         
         c_bess3, c_bess4 = st.columns(2)
-        bess_om_kw_yr = c_bess3.number_input("BESS O&M ($/kW-year)", 0.0, 50.0, 5.0, step=0.5, help="Mantenimiento anual fijo")
-        bess_life_batt = c_bess4.number_input("Battery Life (Years)", 5, 20, 10, help="Año de reemplazo de baterías")
-        bess_life_inv = 15 # Vida útil de inversores (fijo o editable si prefieres)
-
-    # ... (luego sigue 'with st.expander("💰 Financial Specs"...') ...
+        bess_om_kw_yr = c_bess3.number_input("BESS O&M ($/kW-yr)", 0.0, 50.0, 5.0, step=0.5)
+        bess_life_batt = c_bess4.number_input("Battery Life (Yrs)", 5, 20, 10, help="Reemplazo de celdas (Augmentation/Replacement)")
+        
+        # Agregamos el Inversor aquí
+        bess_life_inv = st.number_input("Inverter Life (Yrs)", 5, 30, 15, help="Vida útil de la electrónica de potencia (PCS)")
     
     with st.expander("💰 Financial Specs", expanded=False):
         wacc = st.number_input("WACC (%)", 1.0, 15.0, 8.0) / 100
@@ -3255,6 +3255,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
