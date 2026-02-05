@@ -798,7 +798,37 @@ gen_data = available_gens[selected_gen]
 # GENERATOR PARAMETERS - EDITABLE (NEW FEATURE)
 # ============================================================================
 with st.sidebar.expander("⚙️ Generator Parameters (Editable)", expanded=False):
+    st.markdown("**Capacity & Electrical:**")
+    
+    # 1. POTENCIA (ISO Rating)
+    iso_mw_edit = st.number_input(
+        "ISO Rating (MW)",
+        value=float(gen_data["iso_rating_mw"]), # Asegurar float
+        min_value=0.5, max_value=100.0, step=0.1,
+        help="Potencia nominal bruta del generador"
+    )
+    gen_data["iso_rating_mw"] = iso_mw_edit
+    
+    # 2. TENSIÓN (Voltage)
+    gen_voltage = st.number_input(
+        "Gen Terminal Voltage (kV)",
+        value=13.8, # Valor típico
+        step=0.1,
+        help="Tensión de salida del alternador"
+    )
+    
+    # 3. CARGAS AUXILIARES (Parasitic Load)
+    gen_aux_pct = st.number_input(
+        "Gen Auxiliaries / Parasitic (%)",
+        value=2.0, # Default típico (ventiladores, bombas, etc.)
+        min_value=0.0, max_value=10.0, step=0.1,
+        help="Consumo propio del generador (radiadores, bombas, ventilación)"
+    )
+    gen_data["aux_pct"] = gen_aux_pct # Guardamos en el diccionario
+    
+    st.markdown("---")
     st.markdown("**Reliability & Maintenance:**")
+    # ... (El resto del código de mantenimiento sigue igual) ..
     
     # MTBF (Mean Time Between Failures)
     mtbf_edit = st.number_input(
@@ -900,25 +930,29 @@ unit_site_cap = unit_iso_cap * derate_factor_calc
 # LOGICA SEPARADA: BESS (GOLPE) vs GENERADORES (RESERVA)
 # ============================================================================
 
-# 1. Calcular BESS usando el LOAD STEP FÍSICO (load_step_pct)
+# ============================================================================
+# LOGICA SEPARADA: BESS (GOLPE) vs GENERADORES (RESERVA) - ACTUALIZADO
+# ============================================================================
+
+# 1. Calcular BESS usando CARGA EN BORNES (Carga + Pérdidas)
 bess_power_transient = 0.0
 bess_energy_transient = 0.0
 bess_breakdown_transient = {}
 
 if use_bess:
     bess_power_transient, bess_energy_transient, bess_breakdown_transient = calculate_bess_requirements(
-        p_total_avg, p_total_peak, 
-        load_step_pct,  # <--- CORRECCIÓN: BESS debe aguantar el GOLPE FÍSICO
+        p_avg_at_gen, p_peak_at_gen,  # <--- CAMBIO: Usamos carga con pérdidas
+        load_step_pct,  
         gen_data["ramp_rate_mw_s"], gen_data["step_load_pct"],
         load_ramp_req,
         enable_black_start
     )
 
-# 2. Calcular Generadores usando la POLÍTICA DE RESERVA (spinning_res_pct)
+# 2. Calcular Generadores usando la POLÍTICA DE RESERVA y CARGA EN BORNES
 spinning_reserve_result = calculate_spinning_reserve_units(
-    p_avg_load=p_total_avg,
+    p_avg_load=p_avg_at_gen,  # <--- CAMBIO: Usamos carga con pérdidas
     unit_capacity=unit_site_cap,
-    spinning_reserve_pct=spinning_res_pct, # <--- CORRECCIÓN: Flota se dimensiona por POLÍTICA
+    spinning_reserve_pct=spinning_res_pct, 
     use_bess=use_bess,
     bess_power_mw=bess_power_transient if use_bess else 0,
     gen_step_capability_pct=gen_data["step_load_pct"]
@@ -934,9 +968,10 @@ spinning_from_bess = spinning_reserve_result['spinning_from_bess']
 # ENHANCED FLEET OPTIMIZATION - AVAILABILITY-DRIVEN WITH BESS CREDIT
 # ============================================================================
 
-# Step 1: Calculate MINIMUM n_running (Usamos el GOLPE FÍSICO para validar respuesta)
+# Step 1: Optimización de Flota usando CARGA EN BORNES
 n_running_from_load, fleet_options = optimize_fleet_size(
-    p_total_avg, p_total_peak, unit_site_cap, load_step_pct, gen_data, use_bess
+    p_avg_at_gen, p_peak_at_gen, # <--- CAMBIO: Optimizar flota para carga con pérdidas
+    unit_site_cap, load_step_pct, gen_data, use_bess
 )
 
 # Use the MAXIMUM of spinning reserve calculation and optimization
@@ -956,7 +991,7 @@ reliability_configs = []
 # Configuration A: No BESS (Baseline)
 # Calculate spinning reserve requirements WITHOUT BESS
 spinning_no_bess = calculate_spinning_reserve_units(
-    p_avg_load=p_total_avg,
+    p_avg_load=p_avg_at_gen,
     unit_capacity=unit_site_cap,
     spinning_reserve_pct=spinning_res_pct,  # <--- CORREGIDO (Política)
     use_bess=False,
@@ -970,7 +1005,7 @@ n_running_peak = math.ceil(p_total_peak / unit_site_cap)
 n_running_no_bess = max(spinning_no_bess['n_units_running'], n_running_peak)
 
 # Recalculate load pct based on the final n_running (Critical step!)
-load_pct_no_bess = (p_total_avg / (n_running_no_bess * unit_site_cap)) * 100
+load_pct_no_bess = (p_avg_at_gen / (n_running_no_bess * unit_site_cap)) * 100
 
 print(f"[DEBUG] Config A: n_running={n_running_no_bess} (Peak req: {n_running_peak}), load={load_pct_no_bess:.1f}%", file=sys.stderr)
 
@@ -1045,7 +1080,7 @@ reliability_configs.append(best_config_a)
 if use_bess:
    # Calculate spinning reserve with BESS
     spinning_with_bess = calculate_spinning_reserve_units(
-        p_avg_load=p_total_avg,
+        p_avg_load=p_avg_at_gen,
         unit_capacity=unit_site_cap,
         spinning_reserve_pct=spinning_res_pct,  # <--- CORREGIDO (Política)
         use_bess=True,
@@ -1220,7 +1255,7 @@ if use_bess and bess_reliability_enabled:
                 print(f"[DEBUG] Config C: Avail without BESS={avg_avail*100:.4f}%, with BESS boost={avg_avail_with_bess*100:.4f}%", file=sys.stderr)
                 
                 if avg_avail_with_bess >= avail_decimal:
-                    load_pct_c = (p_total_avg / (n_run * unit_site_cap)) * 100
+                    load_pct_c = (p_avg_at_gen / (n_run * unit_site_cap)) * 100
                     eff_c = get_part_load_efficiency(
                         gen_data["electrical_efficiency"],
                         load_pct_c,
@@ -2139,16 +2174,27 @@ with t2:
     # Net Efficiency & Heat Rate
     st.markdown("### ⚙️ Net Efficiency & Heat Rate")
     
-    aux_power_pct = 2.0
-    mechanical_losses_pct = 1.5
+    # 1. Recuperamos tus inputs dinámicos
+    # Si el usuario no editó nada, usa 2.0% por defecto, si no, usa lo que puso en el Expander.
+    aux_power_pct = gen_data.get("aux_pct", 2.0) 
     
-    gross_efficiency = fleet_efficiency
-    aux_consumption = p_total_avg * (aux_power_pct / 100)
-    net_output = p_total_avg - aux_consumption
-    net_efficiency = gross_efficiency * (1 - aux_power_pct/100)
+    # Recuperamos el valor del Slider de pérdidas que creaste en el Paso 1
+    current_dist_loss = dist_loss_pct 
     
-    heat_rate_lhv_btu = 3412 / net_efficiency
-    heat_rate_hhv_btu = heat_rate_lhv_btu * 1.11
+    # 2. Cálculos de Eficiencia Real
+    gross_efficiency = fleet_efficiency 
+    
+    # Eficiencia Neta = Eficiencia Motor * (1 - Consumo Propio) * (1 - Pérdidas Cables/Trafos)
+    # Ejemplo: 45% * (1 - 0.03) * (1 - 0.015) = ~43% entregado al servidor
+    net_efficiency = gross_efficiency * (1 - aux_power_pct/100) * (1 - current_dist_loss/100)
+    
+    # 3. Conversión a Heat Rate (Combustible)
+    if net_efficiency > 0:
+        heat_rate_lhv_btu = 3412 / net_efficiency
+    else:
+        heat_rate_lhv_btu = 0
+        
+    heat_rate_hhv_btu = heat_rate_lhv_btu * 1.11 # Valor típico HHV/LHV para gas natural
     heat_rate_lhv_mj = heat_rate_lhv_btu * 0.001055
     heat_rate_hhv_mj = heat_rate_hhv_btu * 0.001055
     
@@ -3064,6 +3110,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
