@@ -1197,7 +1197,7 @@ if use_bess and bess_reliability_enabled:
                 
                 # BESS provides additional reliability margin
                 bess_reliability_boost = min(0.0005, bess_credit_int * 0.00005)
-                avg_avail_with_bess = min(0.9999, avg_avail + bess_reliability_boost)
+                avg_avail_with_bess = min(1.0, avg_avail + bess_reliability_boost)
                 
                 print(f"[DEBUG] Config C: Avail without BESS={avg_avail*100:.4f}%, with BESS boost={avg_avail_with_bess*100:.4f}%", file=sys.stderr)
                 
@@ -1241,7 +1241,7 @@ if use_bess and bess_reliability_enabled:
         # Fallback
         st.sidebar.warning("⚠️ Config C: Using fallback")
         n_run_fallback = n_running_min_c
-        n_res_fallback = max(1, 8 - bess_credit_int)
+        n_res_fallback = 100
         
         fallback_avail_c, _ = calculate_availability_weibull(
             n_run_fallback + n_res_fallback, n_run_fallback,
@@ -3046,6 +3046,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
