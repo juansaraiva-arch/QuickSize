@@ -926,7 +926,7 @@ if selected_gen_name == "📄 Import from GERP PDF":
     # MOSTRAR DATOS VALIDADOS (Editables)
     st.sidebar.markdown("#### 📝 Validated Data")
     custom_model = st.sidebar.text_input("Model Name", default_model)
-    
+    selected_gen = custom_model
     c_g1, c_g2 = st.sidebar.columns(2)
     custom_iso_mw = c_g1.number_input("Site ekW (100%)", 0.0, 10000.0, float(default_kw), help="Site Power from GERP") / 1000.0
     custom_eff = c_g2.number_input("Genset Eff. %", 0.0, 60.0, float(default_eff)) / 100.0
@@ -3399,6 +3399,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
