@@ -964,6 +964,7 @@ if selected_gen_name == "📄 Import from GERP PDF":
 else:
     # --- OPCIÓN ESTÁNDAR (Librería) ---
     gen_data = available_gens[selected_gen_name]
+    selected_gen = selected_gen_name
     # Mantenemos el derateo calculado en Sección 2
     # (No tocamos derate_factor_calc aquí, usa el global)
 
@@ -3399,6 +3400,7 @@ col_foot1, col_foot2, col_foot3 = st.columns(3)
 col_foot1.caption("CAT Size Solution v3.0")
 col_foot2.caption("Next-Gen Data Center Power Solutions")
 col_foot3.caption("Caterpillar Electric Power | 2026")
+
 
 
 
