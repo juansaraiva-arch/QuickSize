@@ -2193,25 +2193,35 @@ def render():
         sc_checks = []
         sc_all_pass = True
         
-        # 1. Availability
+        # 1. System Availability (with per-unit context)
+        # Calculate per-unit availability for context
+        unit_annual_maint_hrs = (8760 / gen_data.get('maintenance_interval_hrs', 1000)) * gen_data.get('maintenance_duration_hrs', 48)
+        unit_avail = gen_data.get('mtbf_hours', 48000) / (gen_data.get('mtbf_hours', 48000) + 48 + unit_annual_maint_hrs)
+        
         sc_checks.append({
             'name': 'System Availability',
             'status': '✅ PASS' if target_met else '❌ FAIL',
             'value': f"{prob_gen*100:.3f}%",
-            'target': f"≥ {avail_req}%",
+            'target': f"≥ {avail_req}% (unit: {unit_avail*100:.1f}%)",
             'pass': target_met
         })
         if not target_met:
             sc_all_pass = False
         
-        # 2. Spinning Reserve
-        actual_headroom_mw = n_running * unit_site_cap - p_total_avg
+        # 2. Spinning Reserve (including BESS contribution)
+        gen_headroom_mw = n_running * unit_site_cap - p_total_avg
+        bess_spinning_mw = selected_config.get('spinning_from_bess', 0) if use_bess else 0
+        total_spinning_mw = gen_headroom_mw + bess_spinning_mw
         spinning_target_mw = p_total_avg * spinning_res_pct / 100
-        spinning_ok = actual_headroom_mw >= spinning_target_mw * 0.95
+        spinning_ok = total_spinning_mw >= spinning_target_mw * 0.95
+        if use_bess and bess_spinning_mw > 0:
+            spinning_detail = f"Gen: {gen_headroom_mw:.1f} + BESS: {bess_spinning_mw:.1f}"
+        else:
+            spinning_detail = f"{total_spinning_mw:.1f} MW (gen headroom)"
         sc_checks.append({
             'name': 'Spinning Reserve',
             'status': '✅ PASS' if spinning_ok else '⚠️ MARGINAL',
-            'value': f"{actual_headroom_mw:.1f} MW",
+            'value': spinning_detail,
             'target': f"≥ {spinning_target_mw:.1f} MW ({spinning_res_pct:.0f}%)",
             'pass': spinning_ok
         })
@@ -2232,22 +2242,26 @@ def render():
         if not step_ok:
             sc_all_pass = False
         
-        # 4. Load per Unit (efficiency sweet spot)
-        load_ok = 60 <= load_per_unit_pct <= 90
-        if load_per_unit_pct > 90:
-            load_status = '⚠️ HIGH'
-            load_note = 'Low headroom'
-        elif load_per_unit_pct < 60:
-            load_status = '⚠️ LOW'
-            load_note = 'Oversized fleet'
-        else:
+        # 4. Load per Unit
+        # RICE generators are most efficient at high loads (75-100%)
+        # Only flag if overloaded (>100%) or very low (<60% = poor efficiency)
+        if load_per_unit_pct > 100:
+            load_ok = False
+            load_status = '❌ OVERLOAD'
+        elif load_per_unit_pct >= 75:
+            load_ok = True
             load_status = '✅ OPTIMAL'
-            load_note = 'Efficiency sweet spot'
+        elif load_per_unit_pct >= 60:
+            load_ok = True
+            load_status = '✅ OK'
+        else:
+            load_ok = False
+            load_status = '⚠️ LOW EFF.'
         sc_checks.append({
             'name': 'Load per Unit',
             'status': load_status,
             'value': f"{load_per_unit_pct:.1f}%",
-            'target': '60-90%',
+            'target': '75-100% optimal',
             'pass': load_ok
         })
         if not load_ok:
