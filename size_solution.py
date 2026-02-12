@@ -103,7 +103,8 @@ leps_gas_library = {
         "est_install_kw": 300.0,
         "power_density_mw_per_m2": 0.010,  # NEW: 200 m²/MW
         "gas_pressure_min_psi": 1.5,
-        "reactance_xd_2": 0.14
+        "reactance_xd_2": 0.14,
+        "inertia_h": 1.0  # seconds (high-speed recip)
     },
     "G3520FR": {
         "description": "Fast Response Gen Set (High Speed)",
@@ -124,7 +125,8 @@ leps_gas_library = {
         "est_install_kw": 650.0,
         "power_density_mw_per_m2": 0.010,
         "gas_pressure_min_psi": 1.5,
-        "reactance_xd_2": 0.14
+        "reactance_xd_2": 0.14,
+        "inertia_h": 1.5  # seconds (high-speed, fast response)
     },
     "G3520K": {
         "description": "High Efficiency Gen Set (High Speed)",
@@ -145,7 +147,8 @@ leps_gas_library = {
         "est_install_kw": 650.0,
         "power_density_mw_per_m2": 0.010,
         "gas_pressure_min_psi": 1.5,
-        "reactance_xd_2": 0.13
+        "reactance_xd_2": 0.13,
+        "inertia_h": 1.2  # seconds (high-speed recip)
     },
     "CG260-16": {
         "description": "Cogeneration Specialist (High Speed)",
@@ -166,7 +169,8 @@ leps_gas_library = {
         "est_install_kw": 1100.0,
         "power_density_mw_per_m2": 0.009,
         "gas_pressure_min_psi": 7.25,
-        "reactance_xd_2": 0.15
+        "reactance_xd_2": 0.15,
+        "inertia_h": 1.3  # seconds (high-speed recip)
     },
     "Titan 130": {
         "description": "Solar Gas Turbine (16.5 MW)",
@@ -187,7 +191,8 @@ leps_gas_library = {
         "est_install_kw": 1000.0,
         "power_density_mw_per_m2": 0.020,  # NEW: 50% less footprint
         "gas_pressure_min_psi": 300.0,
-        "reactance_xd_2": 0.18
+        "reactance_xd_2": 0.18,
+        "inertia_h": 5.0  # seconds (gas turbine - higher inertia)
     },
     "G20CM34": {
         "description": "Medium Speed Baseload Platform",
@@ -208,7 +213,8 @@ leps_gas_library = {
         "est_install_kw": 1250.0,
         "power_density_mw_per_m2": 0.008,  # Larger footprint
         "gas_pressure_min_psi": 90.0,
-        "reactance_xd_2": 0.16
+        "reactance_xd_2": 0.16,
+        "inertia_h": 2.5  # seconds (medium-speed recip)
     }
 }
 
@@ -261,6 +267,84 @@ def render():
         if voltage_sag > 10:
             return False, voltage_sag
         return True, voltage_sag
+    
+    def frequency_screening(n_running, unit_cap_mw, p_avg_mw, step_mw, gen_data,
+                            bess_mw=0, bess_enabled=False, freq_hz=60):
+        """
+        Analytical frequency nadir and ROCOF screening.
+        Uses simplified swing equation — NOT a substitute for full ODE simulation.
+        
+        Returns dict with: nadir_hz, rocof_hz_s, nadir_ok, rocof_ok, screening_notes
+        """
+        pf_gen = 0.85
+        S_gen_mva = unit_cap_mw / pf_gen
+        S_total_mva = n_running * S_gen_mva
+        
+        # Inertia
+        H_mech = gen_data.get('inertia_h', 1.0)
+        H_bess = 0.0
+        if bess_enabled and bess_mw > 0:
+            bess_ratio = bess_mw / S_total_mva
+            H_bess = 4.0 * min(1.0, bess_ratio / 0.2)  # Grid-forming standard
+        H_total = H_mech + H_bess
+        
+        # Per-unit step
+        P_step_pu = step_mw / S_total_mva if S_total_mva > 0 else 1.0
+        
+        # Governor parameters
+        R = 0.05  # 5% droop
+        D = 2.0   # Data center PE load damping
+        T_gov = 0.5  # Governor time constant (s)
+        
+        # ROCOF (initial, worst-case before governor responds)
+        # dω/dt = -P_step / (2*H*S_total) * f0 → in Hz/s
+        rocof_initial = (P_step_pu * freq_hz) / (2 * H_total) if H_total > 0 else 99
+        
+        # BESS reduces effective step (fast response)
+        if bess_enabled and bess_mw > 0:
+            bess_coverage = min(bess_mw / step_mw, 1.0) if step_mw > 0 else 0
+            rocof_initial *= (1 - bess_coverage * 0.7)  # BESS covers ~70% instantly
+        
+        # Steady-state frequency deviation (with isochronous governor → 0, but transient nadir matters)
+        # Nadir ≈ f0 - (P_step_pu / (D + 1/R)) * f0 * overshoot_factor
+        delta_f_ss = (P_step_pu / (D + 1/R)) * freq_hz
+        overshoot = 1.0 + math.sqrt(T_gov / (4 * max(H_total, 0.5)))
+        delta_f_nadir = delta_f_ss * overshoot
+        
+        # BESS improves nadir
+        if bess_enabled and bess_mw > 0:
+            bess_pu = min(bess_mw / S_total_mva, P_step_pu)
+            delta_f_nadir *= max(0.3, 1 - bess_pu / P_step_pu * 0.6)
+        
+        nadir_hz = freq_hz - delta_f_nadir
+        nadir_hz = max(nadir_hz, freq_hz - 5.0)  # Floor
+        
+        # Limits
+        nadir_limit = 59.5 if freq_hz == 60 else 49.5
+        rocof_limit = 1.0  # Hz/s (500ms window)
+        
+        nadir_ok = nadir_hz >= nadir_limit
+        rocof_ok = rocof_initial <= rocof_limit
+        
+        notes = []
+        if not nadir_ok:
+            notes.append(f"Nadir {nadir_hz:.2f} Hz < {nadir_limit} Hz — add inertia or BESS")
+        if not rocof_ok:
+            notes.append(f"ROCOF {rocof_initial:.2f} Hz/s > {rocof_limit} Hz/s — add virtual inertia")
+        if nadir_ok and rocof_ok:
+            notes.append("Screening PASS — confirm with detailed ODE simulation")
+        
+        return {
+            'nadir_hz': nadir_hz,
+            'rocof_hz_s': rocof_initial,
+            'nadir_ok': nadir_ok,
+            'rocof_ok': rocof_ok,
+            'nadir_limit': nadir_limit,
+            'rocof_limit': rocof_limit,
+            'H_total': H_total,
+            'P_step_pu': P_step_pu,
+            'notes': notes
+        }
 
     # ==============================================================================
     # NEW: SPINNING RESERVE CALCULATION FUNCTION
@@ -1437,6 +1521,7 @@ def render():
                         found_c = True
                         break
                 except Exception as e:
+                    st.sidebar.caption(f"⚠️ Config C: n_run={n_run}, n_res={n_res_try} — calc error, skipping")
                     continue
         
         if best_config_c:
@@ -2182,7 +2267,36 @@ def render():
             if not bess_covers_step:
                 sc_all_pass = False
         
-        # 6. N+X Redundancy
+        # 6. Frequency Nadir Screening
+        step_mw_screen = p_total_avg * load_step_pct / 100
+        freq_screen = frequency_screening(
+            n_running, unit_site_cap, p_total_avg, step_mw_screen, gen_data,
+            bess_mw=bess_power_total if use_bess else 0,
+            bess_enabled=use_bess,
+            freq_hz=freq_hz
+        )
+        sc_checks.append({
+            'name': 'Freq. Nadir (est.)',
+            'status': '✅ PASS' if freq_screen['nadir_ok'] else '❌ FAIL',
+            'value': f"{freq_screen['nadir_hz']:.2f} Hz",
+            'target': f"≥ {freq_screen['nadir_limit']} Hz",
+            'pass': freq_screen['nadir_ok']
+        })
+        if not freq_screen['nadir_ok']:
+            sc_all_pass = False
+        
+        # 7. ROCOF Screening
+        sc_checks.append({
+            'name': 'ROCOF (est.)',
+            'status': '✅ PASS' if freq_screen['rocof_ok'] else '❌ FAIL',
+            'value': f"{freq_screen['rocof_hz_s']:.2f} Hz/s",
+            'target': f"≤ {freq_screen['rocof_limit']} Hz/s",
+            'pass': freq_screen['rocof_ok']
+        })
+        if not freq_screen['rocof_ok']:
+            sc_all_pass = False
+        
+        # 8. N+X Redundancy
         redundancy_ok = n_reserve >= 1
         sc_checks.append({
             'name': 'Redundancy (N+X)',
@@ -2201,18 +2315,23 @@ def render():
             n_fail = sum(1 for c in sc_checks if not c['pass'])
             st.warning(f"**{n_fail} check(s) need attention** — Review items below.")
         
-        sc_cols = st.columns(len(sc_checks))
-        for i, check in enumerate(sc_checks):
-            with sc_cols[i]:
-                if check['pass']:
+        # Display in rows of 4
+        for row_start in range(0, len(sc_checks), 4):
+            row_checks = sc_checks[row_start:row_start+4]
+            sc_cols = st.columns(len(row_checks))
+            for i, check in enumerate(row_checks):
+                with sc_cols[i]:
                     st.markdown(f"**{check['status']}**")
-                else:
-                    st.markdown(f"**{check['status']}**")
-                st.caption(check['name'])
-                st.markdown(f"**{check['value']}**")
-                st.caption(f"Target: {check['target']}")
+                    st.caption(check['name'])
+                    st.markdown(f"**{check['value']}**")
+                    st.caption(f"Target: {check['target']}")
         
-        st.caption("ℹ️ This is a screening-level validation. For detailed transient stability (frequency, ROCOF, inertia), use the CAT Integrated Designer.")
+        # Show frequency screening notes if any issues
+        if not freq_screen['nadir_ok'] or not freq_screen['rocof_ok']:
+            for note in freq_screen['notes']:
+                st.caption(f"⚡ {note}")
+        
+        st.caption("ℹ️ Frequency/ROCOF values are analytical estimates. For detailed ODE-based transient simulation, use the CAT Integrated Designer.")
         
         # ===========================================================================
         # NEW: SPINNING RESERVE IMPACT VISUALIZATION
@@ -2442,14 +2561,11 @@ def render():
             comparison_data = []
             for config in reliability_configs:
                 # Calculate CAPEX (includes installation and BOP)
-                # Costo Unitario Total = Equipo + Instalación
                 unit_total_cost_kw = gen_data['est_cost_kw'] + gen_data['est_install_kw']
                 
                 genset_capex = config['n_total'] * unit_site_cap * unit_total_cost_kw / 1000
                 
-                # BESS Capex: Potencia ($250/kW) + Energía ($400/kWh)
-                bess_cost_kw = 250.0
-                bess_cost_kwh = 400.0
+                # BESS Capex: Uses user-defined costs from sidebar (bess_cost_kw, bess_cost_kwh)
                 bess_capex = (config['bess_mw'] * 1000 * bess_cost_kw + config['bess_mwh'] * 1000 * bess_cost_kwh) / 1e6
                 
                 total_capex = genset_capex + bess_capex
