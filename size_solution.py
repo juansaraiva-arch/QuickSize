@@ -150,6 +150,28 @@ leps_gas_library = {
         "reactance_xd_2": 0.13,
         "inertia_h": 1.2  # seconds (high-speed recip)
     },
+    "G3516H": {
+        "description": "Data Center Workhorse (High Speed, 2.5 MW)",
+        "type": "High Speed",
+        "iso_rating_mw": 2.5,
+        "electrical_efficiency": 0.441,
+        "heat_rate_lhv": 7740,
+        "step_load_pct": 25.0,
+        "ramp_rate_mw_s": 0.5,
+        "emissions_nox": 0.5,
+        "emissions_co": 2.0,
+        "mtbf_hours": 50000,
+        "maintenance_interval_hrs": 1000,
+        "maintenance_duration_hrs": 48,
+        "default_for": 2.0,
+        "default_maint": 5.0,
+        "est_cost_kw": 550.0,
+        "est_install_kw": 600.0,
+        "power_density_mw_per_m2": 0.010,
+        "gas_pressure_min_psi": 1.5,
+        "reactance_xd_2": 0.14,
+        "inertia_h": 1.2  # seconds (high-speed recip)
+    },
     "CG260-16": {
         "description": "Cogeneration Specialist (High Speed)",
         "type": "High Speed",
@@ -171,6 +193,28 @@ leps_gas_library = {
         "gas_pressure_min_psi": 7.25,
         "reactance_xd_2": 0.15,
         "inertia_h": 1.3  # seconds (high-speed recip)
+    },
+    "C175-20": {
+        "description": "High Power Gas Gen Set (4 MW, High Speed)",
+        "type": "High Speed",
+        "iso_rating_mw": 4.0,
+        "electrical_efficiency": 0.420,
+        "heat_rate_lhv": 8120,
+        "step_load_pct": 20.0,
+        "ramp_rate_mw_s": 0.5,
+        "emissions_nox": 0.5,
+        "emissions_co": 1.5,
+        "mtbf_hours": 50000,
+        "maintenance_interval_hrs": 1000,
+        "maintenance_duration_hrs": 56,
+        "default_for": 2.5,
+        "default_maint": 5.0,
+        "est_cost_kw": 625.0,
+        "est_install_kw": 900.0,
+        "power_density_mw_per_m2": 0.009,
+        "gas_pressure_min_psi": 3.0,
+        "reactance_xd_2": 0.15,
+        "inertia_h": 1.4  # seconds (high-speed, larger frame)
     },
     "Titan 130": {
         "description": "Solar Gas Turbine (16.5 MW)",
@@ -1180,6 +1224,48 @@ def render():
         )
         gen_data["ramp_rate_mw_s"] = ramp_edit
         
+        st.markdown("---")
+        st.markdown("**Cost Estimates (Budget-Level):**")
+        
+        cost_kw_edit = st.number_input(
+            "Equipment Cost ($/kW)",
+            value=gen_data["est_cost_kw"],
+            min_value=100.0,
+            max_value=3000.0,
+            step=25.0,
+            help="Generator equipment cost per kW (budget estimate)"
+        )
+        gen_data["est_cost_kw"] = cost_kw_edit
+        
+        install_kw_edit = st.number_input(
+            "Installation & BOP ($/kW)",
+            value=gen_data["est_install_kw"],
+            min_value=100.0,
+            max_value=3000.0,
+            step=25.0,
+            help="Installation, civil, electrical BOP per kW"
+        )
+        gen_data["est_install_kw"] = install_kw_edit
+        
+        st.markdown("---")
+        st.markdown("**Lead Time (indicative):**")
+        
+        lead_time_defaults = {
+            "XGC1900": 16, "G3520FR": 20, "G3516H": 22, "G3520K": 24,
+            "CG260-16": 28, "C175-20": 30, "Titan 130": 36, "G20CM34": 40
+        }
+        default_lt = lead_time_defaults.get(selected_gen, 24)
+        
+        lead_time_weeks = st.number_input(
+            "Est. Lead Time (weeks)",
+            value=default_lt,
+            min_value=8,
+            max_value=80,
+            step=2,
+            help="Indicative only — lead times change frequently due to demand. Contact your CAT dealer for current availability."
+        )
+        st.caption("⚠️ Lead times are indicative and subject to change. Confirm with dealer.")
+        
         st.success("✅ Custom parameters applied")
 
     # Derated capacity
@@ -2152,6 +2238,75 @@ def render():
         if sim_lcoe <= benchmark_price:
             breakeven_gas_price = gp
             break
+
+    # ==============================================================================
+    # EXECUTIVE SUMMARY (before tabs)
+    # ==============================================================================
+    
+    st.markdown("---")
+    st.markdown("## 📋 Executive Summary")
+    
+    # Savings vs grid
+    annual_grid_cost_display = mwh_year * 1000 * benchmark_price
+    annual_gen_cost_display = fuel_cost_year + om_cost_year + carbon_cost_year
+    annual_savings_display = annual_grid_cost_display - annual_gen_cost_display
+    lifetime_savings_display = annual_savings_display * project_years / 1e6
+    
+    ex_c1, ex_c2, ex_c3, ex_c4, ex_c5, ex_c6 = st.columns(6)
+    
+    ex_c1.metric(
+        "Total Capacity",
+        f"{installed_cap:.0f} MW",
+        f"{n_running}+{n_reserve} × {selected_gen}"
+    )
+    ex_c2.metric(
+        "Total CAPEX",
+        f"${initial_capex_sum:.1f}M",
+        f"${initial_capex_sum/installed_cap:.0f}/kW" if installed_cap > 0 else ""
+    )
+    ex_c3.metric(
+        "LCOE",
+        f"${lcoe:.4f}/kWh",
+        f"{'✅' if lcoe < benchmark_price else '⚠️'} vs Grid ${benchmark_price:.3f}"
+    )
+    ex_c4.metric(
+        "Footprint",
+        f"{total_area_m2:,.0f} m²",
+        f"{total_area_m2/10000:.1f} hectares"
+    )
+    ex_c5.metric(
+        "Availability",
+        f"{prob_gen*100:.2f}%",
+        f"{'✅ Target Met' if target_met else '⚠️ Below Target'}"
+    )
+    ex_c6.metric(
+        "Est. Lead Time",
+        f"{lead_time_weeks} weeks",
+        "⚠️ Confirm with dealer"
+    )
+    
+    # Value proposition vs Grid
+    if annual_savings_display > 0:
+        st.success(
+            f"**💰 Estimated savings vs grid electricity:** "
+            f"**${annual_savings_display/1e6:.1f}M/year** | "
+            f"**${lifetime_savings_display:.0f}M over {project_years} years** | "
+            f"Payback: **{payback_str}**"
+        )
+    else:
+        st.info(
+            f"**LCOE ${lcoe:.4f}/kWh** vs Grid ${benchmark_price:.3f}/kWh — "
+            f"On-site generation premium: ${(lcoe - benchmark_price)*1000:.1f}/MWh "
+            f"(offset by reliability, independence, and power quality benefits)"
+        )
+    
+    # Cost disclaimer
+    st.caption(
+        "⚠️ **Budget-Level Estimates Only** — All costs shown are indicative budgetary figures "
+        "based on typical project data. Final pricing depends on scope, site conditions, volume, "
+        "and market conditions. Equipment and installation costs are editable in the sidebar "
+        "Lead times are subject to change due to current market demand."
+    )
 
     # ==============================================================================
     # 8. OUTPUTS - ENHANCED TABBED INTERFACE
