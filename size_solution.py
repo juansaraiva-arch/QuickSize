@@ -769,50 +769,94 @@ def render():
         st.divider()
 
         # -------------------------------------------------------------------------
-        # 1. PERFIL DE CARGA (LOAD PROFILE)
+        # SOLUTION TEMPLATES (Quick Start)
         # -------------------------------------------------------------------------
+        template_choice = st.selectbox(
+            "🚀 Quick Start Template",
+            ["Custom (Manual)", "Edge / Micro (<5 MW)", "Enterprise (5-50 MW)", 
+             "Hyperscale (50-200 MW)", "AI Campus (200+ MW)"],
+            help="Pre-configures typical parameters. You can adjust any value after."
+        )
+        
+        # Template defaults
+        templates = {
+            "Edge / Micro (<5 MW)": {
+                "dc_type": "Edge Computing", "p_it": 3.0, "avail": 99.90,
+                "pue": 1.40, "step": 25.0, "spin": 15.0, "cap_factor": 0.75,
+                "peak_avg": 1.25, "ramp": 1.0, "gen_filter": ["High Speed"]
+            },
+            "Enterprise (5-50 MW)": {
+                "dc_type": "Colocation", "p_it": 20.0, "avail": 99.98,
+                "pue": 1.30, "step": 25.0, "spin": 20.0, "cap_factor": 0.85,
+                "peak_avg": 1.20, "ramp": 2.0, "gen_filter": ["High Speed"]
+            },
+            "Hyperscale (50-200 MW)": {
+                "dc_type": "Hyperscale Standard", "p_it": 100.0, "avail": 99.99,
+                "pue": 1.20, "step": 30.0, "spin": 20.0, "cap_factor": 0.90,
+                "peak_avg": 1.15, "ramp": 3.0, "gen_filter": ["High Speed", "Medium Speed"]
+            },
+            "AI Campus (200+ MW)": {
+                "dc_type": "AI Factory (Training)", "p_it": 300.0, "avail": 99.99,
+                "pue": 1.15, "step": 40.0, "spin": 25.0, "cap_factor": 0.95,
+                "peak_avg": 1.10, "ramp": 5.0, "gen_filter": ["High Speed", "Medium Speed"]
+            },
+        }
+        
+        tpl = templates.get(template_choice, None)
+        
+        # Apply template defaults (user can override everything below)
+        if tpl:
+            st.caption(f"📋 Template loaded: **{template_choice}** — adjust any value below.")
+        
+        st.divider()
+
         # -------------------------------------------------------------------------
-        # 1. PERFIL DE CARGA (LOAD PROFILE)
+        # 1. LOAD PROFILE
         # -------------------------------------------------------------------------
         st.header("1. Load Profile")
         
         dc_type = st.selectbox("Data Center Type", [
             "AI Factory (Training)", "AI Factory (Inference)", 
             "Hyperscale Standard", "Colocation", "Edge Computing"
-        ])
+        ], index=["AI Factory (Training)", "AI Factory (Inference)", 
+            "Hyperscale Standard", "Colocation", "Edge Computing"].index(tpl["dc_type"]) if tpl else 0)
         
-        p_it = st.number_input("Critical IT Load (MW)", 1.0, 2000.0, 100.0, step=10.0)
+        p_it = st.number_input("Critical IT Load (MW)", 1.0, 2000.0, 
+                               tpl["p_it"] if tpl else 100.0, step=10.0)
         
-        # --- VARIABLE FALTANTE AGREGADA AQUÍ ---
-        avail_req = st.number_input("Target Availability (%)", 90.0, 99.9999, 99.99, format="%.4f", help="Reliability Target (Defines N+X redundancy)")
+        avail_req = st.number_input("Target Availability (%)", 90.0, 99.9999, 
+                                    tpl["avail"] if tpl else 99.99, format="%.4f",
+                                    help="Reliability Target (Defines N+X redundancy)")
         
         with st.expander("⚙️ PUE & Load Dynamics", expanded=False):
-            # Defaults inteligentes por tipo
+            # Defaults from template or by DC type
             pue_defaults = {"AI Factory (Training)": 1.15, "AI Factory (Inference)": 1.20, "Hyperscale Standard": 1.25}
-            def_pue = pue_defaults.get(dc_type, 1.4)
+            def_pue = tpl["pue"] if tpl else pue_defaults.get(dc_type, 1.4)
             
             pue = st.slider("Design PUE", 1.05, 2.00, def_pue, 0.05)
             
-            # Alias para compatibilidad con motor
             pue_input = pue 
             
             c_dyn1, c_dyn2 = st.columns(2)
-            load_step_pct = c_dyn1.number_input("Max Step (%)", 0.0, 100.0, 40.0 if "AI" in dc_type else 20.0)
+            load_step_pct = c_dyn1.number_input("Max Step (%)", 0.0, 100.0, 
+                                                 tpl["step"] if tpl else (40.0 if "AI" in dc_type else 20.0))
             
-            # Alias para compatibilidad
             step_load_req = load_step_pct 
             
-            spinning_res_pct = c_dyn2.number_input("Spinning Res (%)", 0.0, 100.0, 20.0)
+            spinning_res_pct = c_dyn2.number_input("Spinning Res (%)", 0.0, 100.0, 
+                                                    tpl["spin"] if tpl else 20.0)
             
-            # Variables de pérdidas requeridas por el motor (Defaults ocultos)
+            # Distribution losses (hidden defaults)
             dist_loss_pct = 0.015
             gen_parasitic_pct = 0.025
             
-            # Perfil Anual
             st.markdown("**Annual Profile:**")
-            capacity_factor = st.slider("Capacity Factor", 0.3, 1.0, 0.90)
-            peak_avg_ratio = st.slider("Peak/Avg Ratio", 1.0, 2.0, 1.15)
-            load_ramp_req = st.number_input("Ramp Req (MW/s)", 0.1, 10.0, 3.0 if "AI" in dc_type else 1.0)
+            capacity_factor = st.slider("Capacity Factor", 0.3, 1.0, 
+                                        tpl["cap_factor"] if tpl else 0.90)
+            peak_avg_ratio = st.slider("Peak/Avg Ratio", 1.0, 2.0, 
+                                       tpl["peak_avg"] if tpl else 1.15)
+            load_ramp_req = st.number_input("Ramp Req (MW/s)", 0.1, 10.0, 
+                                            tpl["ramp"] if tpl else (3.0 if "AI" in dc_type else 1.0))
 
         # Cálculos intermedios para visualización
         p_total_dc = p_it * pue
@@ -866,7 +910,8 @@ def render():
         # -------------------------------------------------------------------------
         st.header("3. Technology")
         
-        gen_filter = st.multiselect("Tech Filter", ["High Speed", "Medium Speed", "Gas Turbine"], default=["High Speed", "Medium Speed"])
+        gen_filter = st.multiselect("Tech Filter", ["High Speed", "Medium Speed", "Gas Turbine"], 
+                                     default=tpl["gen_filter"] if tpl else ["High Speed", "Medium Speed"])
         
         with st.expander("🔋 BESS & Options", expanded=False):
             use_bess = st.checkbox("Include BESS", value=("AI" in dc_type))
@@ -2305,8 +2350,182 @@ def render():
         "⚠️ **Budget-Level Estimates Only** — All costs shown are indicative budgetary figures "
         "based on typical project data. Final pricing depends on scope, site conditions, volume, "
         "and market conditions. Equipment and installation costs are editable in the sidebar "
+        "(Generator Parameters). Contact your Caterpillar dealer for firm quotations. "
         "Lead times are subject to change due to current market demand."
     )
+    
+    # ==============================================================================
+    # CAT OFF-GRID vs GRID COMPARISON
+    # ==============================================================================
+    
+    with st.expander("📊 **CAT Off-Grid vs Grid — Full Comparison**", expanded=True):
+        
+        # 20-year cumulative cost comparison
+        years_comp = list(range(0, project_years + 1))
+        
+        # Grid: Cumulative cost (no upfront, just annual electricity)
+        grid_annual = mwh_year * 1000 * benchmark_price
+        grid_cumulative = [grid_annual * y for y in years_comp]
+        
+        # CAT Off-Grid: CAPEX upfront + annual opex (fuel + O&M + carbon)
+        cat_annual_opex = fuel_cost_year + om_cost_year + carbon_cost_year
+        cat_capex_total = initial_capex_sum * 1e6
+        cat_cumulative = [cat_capex_total + cat_annual_opex * y for y in years_comp]
+        
+        # With tax benefits
+        annual_tax_benefit = (ptc_annual + itc_annualized + depreciation_annualized)
+        cat_cumulative_tax = [cat_capex_total + (cat_annual_opex - annual_tax_benefit) * y 
+                              for y in years_comp]
+        
+        # Find crossover (payback) year
+        crossover_year = None
+        for y in years_comp[1:]:
+            if cat_cumulative_tax[y] < grid_cumulative[y]:
+                crossover_year = y
+                break
+        
+        # Chart
+        fig_compare = go.Figure()
+        
+        fig_compare.add_trace(go.Scatter(
+            x=years_comp, y=[c/1e6 for c in grid_cumulative],
+            mode='lines', name=f'Grid @ ${benchmark_price:.3f}/kWh',
+            line=dict(color='#e74c3c', width=3, dash='dash'),
+            fill='tonexty' if annual_savings_display > 0 else None
+        ))
+        
+        fig_compare.add_trace(go.Scatter(
+            x=years_comp, y=[c/1e6 for c in cat_cumulative_tax],
+            mode='lines', name=f'CAT Off-Grid (LCOE ${lcoe:.4f}/kWh)',
+            line=dict(color='#f7c948', width=3)
+        ))
+        
+        fig_compare.add_trace(go.Scatter(
+            x=years_comp, y=[c/1e6 for c in cat_cumulative],
+            mode='lines', name='CAT (before tax benefits)',
+            line=dict(color='#f7c948', width=1, dash='dot'),
+            opacity=0.5
+        ))
+        
+        if crossover_year:
+            crossover_cost = cat_cumulative_tax[crossover_year] / 1e6
+            fig_compare.add_annotation(
+                x=crossover_year, y=crossover_cost,
+                text=f"Payback: Year {crossover_year}",
+                showarrow=True, arrowhead=2, arrowsize=1.5,
+                font=dict(size=14, color='#27ae60'),
+                bgcolor='white', bordercolor='#27ae60'
+            )
+        
+        # Savings area annotation
+        if annual_savings_display > 0:
+            fig_compare.add_annotation(
+                x=project_years * 0.7, 
+                y=(grid_cumulative[int(project_years * 0.7)] + cat_cumulative_tax[int(project_years * 0.7)]) / 2 / 1e6,
+                text=f"<b>${lifetime_savings_display:.0f}M savings</b><br>over {project_years} years",
+                showarrow=False, font=dict(size=14, color='#27ae60'),
+                bgcolor='rgba(255,255,255,0.8)'
+            )
+        
+        fig_compare.update_layout(
+            title=f"Cumulative Cost: CAT Off-Grid vs Grid Electricity ({project_years} Years)",
+            xaxis_title="Year", yaxis_title="Cumulative Cost ($M)",
+            height=420, legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            hovermode="x unified"
+        )
+        st.plotly_chart(fig_compare, use_container_width=True)
+        
+        # Side by side metrics
+        col_g1, col_g2, col_g3, col_g4 = st.columns(4)
+        
+        col_g1.metric("Grid 20yr Cost", f"${grid_cumulative[-1]/1e6:.0f}M", "No control over pricing")
+        col_g2.metric("CAT 20yr Cost", f"${cat_cumulative_tax[-1]/1e6:.0f}M", 
+                      f"-${(grid_cumulative[-1] - cat_cumulative_tax[-1])/1e6:.0f}M vs grid" if annual_savings_display > 0 else "")
+        col_g3.metric("Payback", f"Year {crossover_year}" if crossover_year else "N/A",
+                      "After tax benefits" if crossover_year else "")
+        col_g4.metric("Energy Independence", "100%", "No grid dependency")
+        
+        # Qualitative benefits
+        st.markdown(
+            "**Beyond cost:** Off-grid generation with CAT provides guaranteed power availability "
+            f"({prob_gen*100:.2f}%), eliminates grid outage risk, enables site selection flexibility, "
+            "and provides predictable energy costs independent of utility rate increases."
+        )
+    
+    # ==============================================================================
+    # STEP LOAD COMPETITIVE ADVANTAGE
+    # ==============================================================================
+    
+    with st.expander("⚡ **Step Load Capability — CAT Competitive Advantage**", expanded=False):
+        
+        # Compare selected gen vs industry
+        cat_step = gen_data['step_load_pct']
+        cat_ramp = gen_data['ramp_rate_mw_s']
+        
+        competitor_data = pd.DataFrame({
+            'Platform': [
+                f"✅ CAT {selected_gen}",
+                "Wärtsilä 34SG (typical)",
+                "Jenbacher J920 (typical)",
+                "MAN 51/60G (typical)",
+                "Industry Average"
+            ],
+            'Step Load (%)': [cat_step, 15.0, 20.0, 10.0, 15.0],
+            'Response': ['CAT', 'Competitor', 'Competitor', 'Competitor', 'Average']
+        })
+        
+        fig_step = px.bar(
+            competitor_data, x='Platform', y='Step Load (%)',
+            color='Response',
+            color_discrete_map={'CAT': '#f7c948', 'Competitor': '#95a5a6', 'Average': '#bdc3c7'},
+            text_auto=True
+        )
+        
+        # Add the requirement line
+        fig_step.add_hline(
+            y=load_step_pct, line_dash="dash", line_color="red",
+            annotation_text=f"Your Requirement: {load_step_pct:.0f}%"
+        )
+        
+        fig_step.update_layout(
+            title="Step Load Acceptance — CAT vs Industry",
+            height=380, showlegend=False,
+            yaxis_title="Step Load Acceptance (%)"
+        )
+        st.plotly_chart(fig_step, use_container_width=True)
+        
+        # Impact statement
+        step_mw_actual = p_total_avg * load_step_pct / 100
+        cat_handles_mw = n_running * unit_site_cap * cat_step / 100
+        
+        col_s1, col_s2, col_s3 = st.columns(3)
+        col_s1.metric(f"CAT {selected_gen}", f"{cat_step:.0f}%", 
+                      f"{cat_handles_mw:.1f} MW step capacity")
+        col_s2.metric("Your Requirement", f"{load_step_pct:.0f}%", 
+                      f"{step_mw_actual:.1f} MW step load")
+        
+        margin_pct = cat_handles_mw / step_mw_actual * 100 if step_mw_actual > 0 else 0
+        col_s3.metric("Coverage", f"{margin_pct:.0f}%",
+                      "✅ Covered" if margin_pct >= 100 else f"⚠️ Need BESS for {step_mw_actual - cat_handles_mw:.1f} MW gap")
+        
+        if use_bess and bess_power_total > 0:
+            st.success(
+                f"**With BESS ({bess_power_total:.1f} MW):** CAT generators handle {cat_step:.0f}% step natively + "
+                f"BESS provides instant bridge power for the remaining load transient. "
+                f"This combination handles {load_step_pct:.0f}% step loads that competitors cannot match."
+            )
+        else:
+            if cat_step >= load_step_pct:
+                st.success(
+                    f"**{selected_gen} handles your {load_step_pct:.0f}% step load natively** — "
+                    f"no BESS required for transient support. Most competitors need supplemental energy storage "
+                    f"to handle step loads above 15-20%."
+                )
+            else:
+                st.info(
+                    f"**Consider adding BESS** to handle the {load_step_pct - cat_step:.0f}% gap between "
+                    f"generator capability ({cat_step:.0f}%) and your requirement ({load_step_pct:.0f}%)."
+                )
 
     # ==============================================================================
     # 8. OUTPUTS - ENHANCED TABBED INTERFACE
