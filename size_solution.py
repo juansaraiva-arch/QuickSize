@@ -2453,90 +2453,18 @@ def render():
         )
     
     # ==============================================================================
-    # STEP LOAD COMPETITIVE ADVANTAGE
-    # ==============================================================================
-    
-    with st.expander("⚡ **Step Load Capability — CAT Competitive Advantage**", expanded=False):
-        
-        # Compare selected gen vs industry
-        cat_step = gen_data['step_load_pct']
-        cat_ramp = gen_data['ramp_rate_mw_s']
-        
-        competitor_data = pd.DataFrame({
-            'Platform': [
-                f"✅ CAT {selected_gen}",
-                "Wärtsilä 34SG (typical)",
-                "Jenbacher J920 (typical)",
-                "MAN 51/60G (typical)",
-                "Industry Average"
-            ],
-            'Step Load (%)': [cat_step, 15.0, 20.0, 10.0, 15.0],
-            'Response': ['CAT', 'Competitor', 'Competitor', 'Competitor', 'Average']
-        })
-        
-        fig_step = px.bar(
-            competitor_data, x='Platform', y='Step Load (%)',
-            color='Response',
-            color_discrete_map={'CAT': '#f7c948', 'Competitor': '#95a5a6', 'Average': '#bdc3c7'},
-            text_auto=True
-        )
-        
-        # Add the requirement line
-        fig_step.add_hline(
-            y=load_step_pct, line_dash="dash", line_color="red",
-            annotation_text=f"Your Requirement: {load_step_pct:.0f}%"
-        )
-        
-        fig_step.update_layout(
-            title="Step Load Acceptance — CAT vs Industry",
-            height=380, showlegend=False,
-            yaxis_title="Step Load Acceptance (%)"
-        )
-        st.plotly_chart(fig_step, use_container_width=True)
-        
-        # Impact statement
-        step_mw_actual = p_total_avg * load_step_pct / 100
-        cat_handles_mw = n_running * unit_site_cap * cat_step / 100
-        
-        col_s1, col_s2, col_s3 = st.columns(3)
-        col_s1.metric(f"CAT {selected_gen}", f"{cat_step:.0f}%", 
-                      f"{cat_handles_mw:.1f} MW step capacity")
-        col_s2.metric("Your Requirement", f"{load_step_pct:.0f}%", 
-                      f"{step_mw_actual:.1f} MW step load")
-        
-        margin_pct = cat_handles_mw / step_mw_actual * 100 if step_mw_actual > 0 else 0
-        col_s3.metric("Coverage", f"{margin_pct:.0f}%",
-                      "✅ Covered" if margin_pct >= 100 else f"⚠️ Need BESS for {step_mw_actual - cat_handles_mw:.1f} MW gap")
-        
-        if use_bess and bess_power_total > 0:
-            st.success(
-                f"**With BESS ({bess_power_total:.1f} MW):** CAT generators handle {cat_step:.0f}% step natively + "
-                f"BESS provides instant bridge power for the remaining load transient. "
-                f"This combination handles {load_step_pct:.0f}% step loads that competitors cannot match."
-            )
-        else:
-            if cat_step >= load_step_pct:
-                st.success(
-                    f"**{selected_gen} handles your {load_step_pct:.0f}% step load natively** — "
-                    f"no BESS required for transient support. Most competitors need supplemental energy storage "
-                    f"to handle step loads above 15-20%."
-                )
-            else:
-                st.info(
-                    f"**Consider adding BESS** to handle the {load_step_pct - cat_step:.0f}% gap between "
-                    f"generator capability ({cat_step:.0f}%) and your requirement ({load_step_pct:.0f}%)."
-                )
-
-    # ==============================================================================
     # 8. OUTPUTS - ENHANCED TABBED INTERFACE
     # ==============================================================================
 
-    t1, t2, t3, t4, t5 = st.tabs([
+    t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs([
         "📊 System Design", 
         "⚡ Performance & Stability", 
         "🏗️ Footprint & Optimization",
         "❄️ Cooling & Tri-Gen", 
-        "💰 Economics & ROI"
+        "💰 Economics & ROI",
+        "📅 Phasing & Modular Build",
+        "🌍 Emissions Compliance",
+        "🔊 Noise Assessment"
     ])
 
     with t1:
@@ -3975,6 +3903,470 @@ def render():
                         st.error(f"Error: {str(e)}")
         
         st.caption("Report includes: Load Requirements, Generator Selection, Fleet Configuration, Spinning Reserve Analysis, BESS System, Electrical Performance, Footprint, Environmental, and Financial Analysis.")
+
+    # ==============================================================================
+    # TAB 6: PHASING & MODULAR BUILD
+    # ==============================================================================
+    
+    with t6:
+        st.subheader("📅 Phasing & Modular Deployment")
+        st.markdown("""
+        Plan a multi-phase deployment to match data center build-out schedule. 
+        Each phase adds generation capacity as IT load grows.
+        """)
+        
+        # Phase configuration
+        col_ph_cfg, col_ph_results = st.columns([1, 2])
+        
+        with col_ph_cfg:
+            st.markdown("### ⚙️ Phase Configuration")
+            
+            n_phases = st.slider("Number of Phases", 1, 5, 3, key="n_phases")
+            months_between = st.number_input("Months Between Phases", 3, 36, 12, step=3,
+                                              key="months_between")
+            
+            # Define phase percentages
+            st.markdown("**Load per Phase (% of total):**")
+            phase_pcts = []
+            remaining = 100.0
+            
+            for i in range(n_phases):
+                if i < n_phases - 1:
+                    default_pct = min(round(100 / n_phases), remaining)
+                    pct = st.number_input(
+                        f"Phase {i+1} (%)", 5.0, remaining, float(default_pct), step=5.0,
+                        key=f"phase_pct_{i}"
+                    )
+                    phase_pcts.append(pct)
+                    remaining -= pct
+                else:
+                    phase_pcts.append(remaining)
+                    st.number_input(f"Phase {n_phases} (%)", value=remaining, 
+                                   disabled=True, key=f"phase_pct_{i}")
+        
+        with col_ph_results:
+            st.markdown("### 📊 Deployment Schedule")
+            
+            # Calculate per-phase details
+            phase_data = []
+            cumulative_mw = 0
+            cumulative_gens = 0
+            cumulative_capex = 0
+            
+            gen_cost_per_mw = (gen_data["est_cost_kw"] + gen_data["est_install_kw"]) * 1000 / 1e6
+            
+            for i, pct in enumerate(phase_pcts):
+                phase_load_mw = p_total_avg * pct / 100
+                phase_gens_needed = max(1, math.ceil(phase_load_mw / unit_site_cap))
+                phase_reserve = max(1, math.ceil(phase_gens_needed * n_reserve / n_running)) if n_running > 0 else 1
+                phase_total_gens = phase_gens_needed + phase_reserve
+                phase_installed_mw = phase_total_gens * unit_site_cap
+                phase_capex = phase_installed_mw * gen_cost_per_mw
+                
+                # BESS proportional
+                phase_bess_mw = bess_power_total * pct / 100 if use_bess else 0
+                phase_bess_capex = phase_bess_mw * 1000 * bess_cost_kw / 1e6 if use_bess else 0
+                
+                cumulative_mw += phase_installed_mw
+                cumulative_gens += phase_total_gens
+                cumulative_capex += phase_capex + phase_bess_capex
+                
+                month = i * months_between
+                
+                phase_data.append({
+                    'Phase': f"Phase {i+1}",
+                    'Month': month,
+                    'IT Load (MW)': f"{phase_load_mw:.1f}",
+                    'Generators': f"{phase_gens_needed}+{phase_reserve}",
+                    'Installed (MW)': f"{phase_installed_mw:.1f}",
+                    'BESS (MW)': f"{phase_bess_mw:.1f}" if use_bess else "—",
+                    'Phase CAPEX ($M)': f"${phase_capex + phase_bess_capex:.1f}",
+                    'Cumul. MW': f"{cumulative_mw:.1f}",
+                    'Cumul. CAPEX ($M)': f"${cumulative_capex:.1f}",
+                })
+            
+            df_phases = pd.DataFrame(phase_data)
+            st.dataframe(df_phases, use_container_width=True, hide_index=True)
+            
+            # Timeline chart
+            fig_phase = go.Figure()
+            
+            # Cumulative capacity
+            months_list = [d['Month'] for d in phase_data]
+            cumul_mw_list = [float(d['Cumul. MW']) for d in phase_data]
+            load_list = [p_total_avg * sum(phase_pcts[:i+1]) / 100 for i in range(len(phase_pcts))]
+            
+            # Extend to show flat lines between phases
+            x_timeline = []
+            y_cap = []
+            y_load = []
+            for i, m in enumerate(months_list):
+                if i > 0:
+                    x_timeline.append(m - 0.1)
+                    y_cap.append(cumul_mw_list[i-1])
+                    y_load.append(load_list[i-1])
+                x_timeline.append(m)
+                y_cap.append(cumul_mw_list[i])
+                y_load.append(load_list[i])
+            # Extend to end
+            end_month = months_list[-1] + months_between
+            x_timeline.append(end_month)
+            y_cap.append(cumul_mw_list[-1])
+            y_load.append(load_list[-1])
+            
+            fig_phase.add_trace(go.Scatter(
+                x=x_timeline, y=y_cap, mode='lines+markers',
+                name='Installed Capacity (MW)', line=dict(color='#f7c948', width=3)
+            ))
+            fig_phase.add_trace(go.Scatter(
+                x=x_timeline, y=y_load, mode='lines+markers',
+                name='IT Load (MW)', line=dict(color='#3498db', width=2, dash='dash')
+            ))
+            
+            fig_phase.update_layout(
+                title="Modular Deployment Timeline",
+                xaxis_title="Month", yaxis_title="MW",
+                height=380, legend=dict(orientation="h", yanchor="bottom", y=1.02)
+            )
+            st.plotly_chart(fig_phase, use_container_width=True)
+            
+            # Key benefits
+            st.markdown("### 💡 Phasing Benefits")
+            
+            phase1_capex = float(phase_data[0]['Phase CAPEX ($M)'].replace('$', ''))
+            total_single_capex = initial_capex_sum
+            
+            col_b1, col_b2, col_b3 = st.columns(3)
+            col_b1.metric("Phase 1 CAPEX", f"${phase1_capex:.1f}M", 
+                         f"{phase1_capex/total_single_capex*100:.0f}% of total")
+            col_b2.metric("CAPEX Deferral", f"${total_single_capex - phase1_capex:.1f}M",
+                         "Deferred to later phases")
+            col_b3.metric("Time to First Power", f"{lead_time_weeks} weeks",
+                         f"Phase 1: {int(phase_pcts[0])}% of capacity")
+    
+    # ==============================================================================
+    # TAB 7: EMISSIONS COMPLIANCE
+    # ==============================================================================
+    
+    with t7:
+        st.subheader("🌍 Emissions Compliance Checker")
+        st.markdown("""
+        Verify compliance against major environmental regulations. 
+        Emission values are calculated based on selected generator and operating profile.
+        """)
+        
+        # Calculated emissions
+        nox_g_per_kwh = gen_data["emissions_nox"]  # g/kWh from library
+        co_g_per_kwh = gen_data["emissions_co"]
+        
+        # Convert to different units needed by regulations
+        nox_mg_per_nm3 = nox_g_per_kwh * 3.6 / 4.5  # Approximate conversion
+        co_mg_per_nm3 = co_g_per_kwh * 3.6 / 4.5
+        nox_ppmvd = nox_mg_per_nm3 / 2.05  # mg/Nm3 to ppmvd @15% O2 (approx)
+        co_ppmvd = co_mg_per_nm3 / 1.25
+        
+        # Annual totals
+        nox_tons_per_year = nox_tons_year
+        co_tons_per_year = (co_lb_hr * effective_hours) / 2000
+        
+        st.markdown("### 📊 Site Emissions Summary")
+        
+        col_e1, col_e2, col_e3, col_e4 = st.columns(4)
+        col_e1.metric("NOx", f"{nox_lb_hr:.1f} lb/hr", f"{nox_tons_per_year:.1f} tons/yr")
+        col_e2.metric("CO", f"{co_lb_hr:.1f} lb/hr", f"{co_tons_per_year:.1f} tons/yr")
+        col_e3.metric("CO₂", f"{co2_ton_yr:,.0f} tons/yr", f"{co2_ton_yr/p_total_avg/8760:.3f} t/MWh")
+        col_e4.metric("NOx Rate", f"{nox_g_per_kwh:.2f} g/kWh", f"≈ {nox_ppmvd:.0f} ppmvd @15% O₂")
+        
+        st.markdown("---")
+        
+        # Regulatory frameworks
+        st.markdown("### 📋 Regulatory Compliance Matrix")
+        
+        # Define regulations with limits
+        regulations = [
+            {
+                'Regulation': 'US EPA NSPS (40 CFR 60 Subpart JJJJ)',
+                'Region': 'United States',
+                'NOx Limit': '2.0 g/bhp-hr (≈1.5 g/kWh)',
+                'CO Limit': '5.0 g/bhp-hr',
+                'Applies': 'Stationary SI engines >500 hp',
+                'nox_limit_gkwh': 1.5,
+                'co_limit_gkwh': 3.7,
+            },
+            {
+                'Regulation': 'US EPA Major Source (Title V)',
+                'Region': 'United States',
+                'NOx Limit': '<100 tons/yr (avoid Title V)',
+                'CO Limit': '<100 tons/yr',
+                'Applies': f'Total site emissions',
+                'nox_limit_tpy': 100,
+                'co_limit_tpy': 100,
+            },
+            {
+                'Regulation': 'EU Medium Combustion Plant (MCP) Directive',
+                'Region': 'European Union',
+                'NOx Limit': '190 mg/Nm³ (existing) / 95 mg/Nm³ (new)',
+                'CO Limit': '500 mg/Nm³',
+                'Applies': '1-50 MWth combustion plants',
+                'nox_limit_mg': 95,
+                'co_limit_mg': 500,
+            },
+            {
+                'Regulation': 'EU Industrial Emissions Directive (IED)',
+                'Region': 'European Union',
+                'NOx Limit': '75 mg/Nm³ (BAT-AEL)',
+                'CO Limit': '100 mg/Nm³ (BAT-AEL)',
+                'Applies': '>50 MWth combustion plants',
+                'nox_limit_mg': 75,
+                'co_limit_mg': 100,
+            },
+            {
+                'Regulation': 'CARB (California)',
+                'Region': 'California, US',
+                'NOx Limit': '0.15 g/bhp-hr (BACT)',
+                'CO Limit': '0.6 g/bhp-hr (BACT)',
+                'Applies': 'Stationary engines (strictest US)',
+                'nox_limit_gkwh': 0.11,
+                'co_limit_gkwh': 0.45,
+            },
+        ]
+        
+        # Build compliance table
+        compliance_rows = []
+        for reg in regulations:
+            nox_status = "—"
+            co_status = "—"
+            
+            # Check g/kWh based limits
+            if 'nox_limit_gkwh' in reg:
+                nox_pass = nox_g_per_kwh <= reg['nox_limit_gkwh']
+                nox_status = f"✅ {nox_g_per_kwh:.2f} ≤ {reg['nox_limit_gkwh']}" if nox_pass else f"❌ {nox_g_per_kwh:.2f} > {reg['nox_limit_gkwh']}"
+            if 'co_limit_gkwh' in reg:
+                co_pass = co_g_per_kwh <= reg['co_limit_gkwh']
+                co_status = f"✅ {co_g_per_kwh:.1f} ≤ {reg['co_limit_gkwh']}" if co_pass else f"❌ {co_g_per_kwh:.1f} > {reg['co_limit_gkwh']}"
+            
+            # Check tons/yr limits
+            if 'nox_limit_tpy' in reg:
+                nox_pass = nox_tons_per_year <= reg['nox_limit_tpy']
+                nox_status = f"✅ {nox_tons_per_year:.0f} ≤ {reg['nox_limit_tpy']} tpy" if nox_pass else f"❌ {nox_tons_per_year:.0f} > {reg['nox_limit_tpy']} tpy"
+            if 'co_limit_tpy' in reg:
+                co_pass = co_tons_per_year <= reg['co_limit_tpy']
+                co_status = f"✅ {co_tons_per_year:.0f} ≤ {reg['co_limit_tpy']} tpy" if co_pass else f"❌ {co_tons_per_year:.0f} > {reg['co_limit_tpy']} tpy"
+            
+            # Check mg/Nm3 limits
+            if 'nox_limit_mg' in reg:
+                nox_pass = nox_mg_per_nm3 <= reg['nox_limit_mg']
+                nox_status = f"✅ {nox_mg_per_nm3:.0f} ≤ {reg['nox_limit_mg']}" if nox_pass else f"❌ {nox_mg_per_nm3:.0f} > {reg['nox_limit_mg']}"
+            if 'co_limit_mg' in reg:
+                co_pass = co_mg_per_nm3 <= reg['co_limit_mg']
+                co_status = f"✅ {co_mg_per_nm3:.0f} ≤ {reg['co_limit_mg']}" if co_pass else f"❌ {co_mg_per_nm3:.0f} > {reg['co_limit_mg']}"
+            
+            compliance_rows.append({
+                'Regulation': reg['Regulation'],
+                'Region': reg['Region'],
+                'NOx Status': nox_status,
+                'CO Status': co_status,
+                'Scope': reg['Applies'],
+            })
+        
+        df_compliance = pd.DataFrame(compliance_rows)
+        st.dataframe(df_compliance, use_container_width=True, hide_index=True)
+        
+        # Aftertreatment recommendation
+        st.markdown("### 🔧 Aftertreatment Recommendation")
+        
+        needs_scr = nox_tons_per_year > 100 or nox_g_per_kwh > 0.5
+        needs_oxicat = co_tons_per_year > 100 or co_g_per_kwh > 2.0
+        
+        if needs_scr or needs_oxicat or force_emissions:
+            controls = []
+            if needs_scr or force_emissions:
+                controls.append("SCR (Selective Catalytic Reduction) for NOx")
+            if needs_oxicat or force_emissions:
+                controls.append("Oxidation Catalyst for CO/VOC")
+            
+            st.warning(
+                f"**Aftertreatment recommended:** {' + '.join(controls)}\n\n"
+                f"Estimated cost: **${at_capex_total/1e6:.2f}M** "
+                f"(${(cost_scr_kw + cost_oxicat_kw):.0f}/kW × {installed_cap:.0f} MW)"
+            )
+            
+            # Post-treatment emissions
+            scr_nox_reduction = 0.90  # 90% NOx reduction with SCR
+            oxicat_co_reduction = 0.85  # 85% CO reduction
+            
+            col_at1, col_at2 = st.columns(2)
+            with col_at1:
+                st.markdown("**Before Treatment:**")
+                st.caption(f"NOx: {nox_g_per_kwh:.2f} g/kWh | {nox_tons_per_year:.0f} tons/yr")
+                st.caption(f"CO: {co_g_per_kwh:.1f} g/kWh | {co_tons_per_year:.0f} tons/yr")
+            with col_at2:
+                st.markdown("**After Treatment (estimated):**")
+                st.caption(f"NOx: {nox_g_per_kwh * (1-scr_nox_reduction):.3f} g/kWh | {nox_tons_per_year * (1-scr_nox_reduction):.0f} tons/yr")
+                st.caption(f"CO: {co_g_per_kwh * (1-oxicat_co_reduction):.2f} g/kWh | {co_tons_per_year * (1-oxicat_co_reduction):.0f} tons/yr")
+        else:
+            st.success(
+                "**No aftertreatment required** for US EPA NSPS and Title V compliance at this site scale. "
+                "Verify local AQMD/permitting requirements for your specific jurisdiction."
+            )
+        
+        st.caption(
+            "⚠️ Emission calculations are estimates based on manufacturer data at rated conditions. "
+            "Actual emissions depend on load profile, altitude, temperature, and fuel composition. "
+            "Consult a qualified environmental engineer for permit applications."
+        )
+    
+    # ==============================================================================
+    # TAB 8: NOISE ASSESSMENT
+    # ==============================================================================
+    
+    with t8:
+        st.subheader("🔊 Noise Assessment")
+        st.markdown("""
+        Estimate site noise levels based on fleet size and generator specifications.
+        Critical for permitting, especially for urban/suburban data center locations.
+        """)
+        
+        col_noise_cfg, col_noise_results = st.columns([1, 2])
+        
+        with col_noise_cfg:
+            st.markdown("### ⚙️ Site Configuration")
+            
+            # Noise data by generator type
+            noise_db_defaults = {
+                "High Speed": 102,   # dB(A) at 1m, typical for genset enclosure
+                "Medium Speed": 105,
+                "Gas Turbine": 98,   # Turbines lower with acoustic enclosure
+            }
+            
+            gen_type = gen_data.get("type", "High Speed")
+            base_noise_db = noise_db_defaults.get(gen_type, 102)
+            
+            source_noise_db = st.number_input(
+                "Source Noise per Unit dB(A) @1m",
+                value=base_noise_db, min_value=80, max_value=120, step=1,
+                help="Sound power level per generator with standard acoustic enclosure"
+            )
+            
+            enclosure_type = st.selectbox(
+                "Acoustic Treatment",
+                ["Standard Enclosure (-0 dB)", "Enhanced Enclosure (-10 dB)", 
+                 "Critical Silencing (-20 dB)", "Building Enclosed (-25 dB)"],
+                index=0
+            )
+            enclosure_reduction = {"Standard Enclosure (-0 dB)": 0, "Enhanced Enclosure (-10 dB)": 10,
+                                   "Critical Silencing (-20 dB)": 20, "Building Enclosed (-25 dB)": 25}
+            attenuation = enclosure_reduction.get(enclosure_type, 0)
+            
+            st.markdown("**Distances to Receiver:**")
+            dist_property = st.number_input("Property Line (m)", 10, 2000, 100, step=10)
+            dist_nearest = st.number_input("Nearest Residence (m)", 50, 5000, 500, step=50)
+            
+            # Noise limit
+            noise_limit = st.selectbox(
+                "Applicable Noise Limit",
+                ["Residential Night: 45 dB(A)", "Residential Day: 55 dB(A)",
+                 "Commercial: 65 dB(A)", "Industrial: 70 dB(A)", "Rural: 40 dB(A)"],
+                index=1
+            )
+            noise_limit_db = int(noise_limit.split(":")[1].strip().split(" ")[0])
+        
+        with col_noise_results:
+            st.markdown("### 📊 Noise Propagation Analysis")
+            
+            # Calculate combined noise from multiple units
+            # N identical sources: L_total = L_single + 10*log10(N)
+            effective_source_db = source_noise_db - attenuation
+            combined_db = effective_source_db + 10 * math.log10(n_running) if n_running > 0 else 0
+            
+            # Distance attenuation (point source, free field)
+            # L_receiver = L_source - 20*log10(distance) - 11 (for hemispherical spreading)
+            def noise_at_distance(combined_db, distance_m):
+                if distance_m <= 1:
+                    return combined_db
+                return combined_db - 20 * math.log10(distance_m) - 11
+            
+            noise_property = noise_at_distance(combined_db, dist_property)
+            noise_residence = noise_at_distance(combined_db, dist_nearest)
+            
+            # Results
+            col_n1, col_n2, col_n3 = st.columns(3)
+            col_n1.metric("Combined Source", f"{combined_db:.1f} dB(A)",
+                         f"{n_running} units × {effective_source_db:.0f} dB(A)")
+            
+            property_ok = noise_property <= noise_limit_db
+            col_n2.metric("At Property Line", f"{noise_property:.1f} dB(A)",
+                         f"{'✅ PASS' if property_ok else '❌ FAIL'} (limit: {noise_limit_db})")
+            
+            residence_ok = noise_residence <= noise_limit_db
+            col_n3.metric("At Nearest Residence", f"{noise_residence:.1f} dB(A)",
+                         f"{'✅ PASS' if residence_ok else '❌ FAIL'} (limit: {noise_limit_db})")
+            
+            # Distance chart
+            distances = np.logspace(1, np.log10(max(2000, dist_nearest * 1.5)), 50)
+            noise_levels = [noise_at_distance(combined_db, d) for d in distances]
+            
+            fig_noise = go.Figure()
+            
+            fig_noise.add_trace(go.Scatter(
+                x=distances, y=noise_levels, mode='lines',
+                name='Predicted Noise Level', line=dict(color='#e67e22', width=3)
+            ))
+            
+            # Limit line
+            fig_noise.add_hline(y=noise_limit_db, line_dash="dash", line_color="red",
+                               annotation_text=f"Limit: {noise_limit_db} dB(A)")
+            
+            # Mark key distances
+            fig_noise.add_vline(x=dist_property, line_dash="dot", line_color="blue",
+                               annotation_text=f"Property: {dist_property}m")
+            fig_noise.add_vline(x=dist_nearest, line_dash="dot", line_color="green",
+                               annotation_text=f"Residence: {dist_nearest}m")
+            
+            fig_noise.update_layout(
+                title="Noise Level vs Distance",
+                xaxis_title="Distance (m)", yaxis_title="Sound Level dB(A)",
+                xaxis_type="log", height=400,
+                yaxis_range=[max(20, noise_limit_db - 20), combined_db + 5]
+            )
+            st.plotly_chart(fig_noise, use_container_width=True)
+            
+            # Minimum distance to meet limit
+            # L_limit = L_combined - 20*log10(d_min) - 11
+            # d_min = 10^((L_combined - L_limit - 11) / 20)
+            if combined_db > noise_limit_db + 11:
+                min_distance = 10 ** ((combined_db - noise_limit_db - 11) / 20)
+            else:
+                min_distance = 1.0
+            
+            st.markdown("### 📏 Setback Requirements")
+            
+            col_sb1, col_sb2 = st.columns(2)
+            col_sb1.metric("Minimum Distance to Limit", f"{min_distance:.0f} m",
+                          f"To achieve ≤{noise_limit_db} dB(A)")
+            
+            if not property_ok:
+                additional_attenuation = noise_property - noise_limit_db
+                col_sb2.metric("Additional Attenuation Needed", f"{additional_attenuation:.1f} dB",
+                              "At property line")
+                st.warning(
+                    f"**Property line exceeds noise limit by {additional_attenuation:.1f} dB.** "
+                    f"Options: upgrade acoustic enclosure, add noise barriers ({additional_attenuation+5:.0f} dB barrier), "
+                    f"or increase setback to {min_distance:.0f}m."
+                )
+            else:
+                col_sb2.metric("Margin at Property", f"{noise_limit_db - noise_property:.1f} dB",
+                              "✅ Below limit")
+                st.success(
+                    f"**Noise levels comply** at property line ({noise_property:.1f} dB(A) ≤ {noise_limit_db} dB(A)). "
+                    f"Minimum setback: {min_distance:.0f}m."
+                )
+            
+            st.caption(
+                "⚠️ Noise estimates use simplified free-field propagation (ISO 9613-2). "
+                "Actual levels depend on terrain, barriers, atmospheric conditions, and reflections. "
+                "A detailed acoustic study is recommended for permitting."
+            )
 
     # --- FOOTER ---
     st.markdown("---")
