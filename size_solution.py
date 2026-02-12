@@ -3480,3 +3480,11 @@ def render():
     col_foot3.caption("Caterpillar Electric Power | 2026")
 
 
+
+
+# ==============================================================================
+# MAIN ENTRY POINT
+# ==============================================================================
+if __name__ == "__main__" or True:  # Always run in Streamlit
+    st.set_page_config(page_title="CAT Size Solution", page_icon="⚡", layout="wide")
+    render()
